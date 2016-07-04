@@ -92,6 +92,7 @@ Finish installing OpenCV on your Pi
 # REMOVE FILES:
 <code>$ rm -rf opencv-3.1.0 opencv_contrib-3.1.0</code>
 
-
+# annen info:
+http://www.pyimagesearch.com/2016/02/29/saving-key-event-video-clips-with-opencv/
 
 
