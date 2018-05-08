@@ -1,8 +1,7 @@
 # import the necessary packages
 from pyimagesearch.tempimage import TempImage
 from pyimagesearch.keyclipwriterjoin import KeyClipWriter
-from dropbox.client import DropboxOAuth2FlowNoRedirect
-from dropbox.client import DropboxClient
+
 from picamera.array import PiRGBArray
 from picamera import PiCamera
 from imutils.video.pivideostream import PiVideoStream
@@ -42,18 +41,6 @@ conf = json.load(open(args["conf"]))
 client = None
 fps = 15 #conf["fps"]
 beat.set_rate(fps)
-
-# check to see if the Dropbox should be used
-if conf["use_dropbox"]:
-	# connect to dropbox and start the session authorization process
-	flow = DropboxOAuth2FlowNoRedirect(conf["dropbox_key"], conf["dropbox_secret"])
-	print( "[INFO] Authorize this application: {}".format(flow.start()))
-	authCode = input("Enter auth code here: ").strip()
-
-	# finish the authorization and grab the Dropbox client
-	(accessToken, userID) = flow.finish(authCode)
-	client = DropboxClient(accessToken)
-	print( "[SUCCESS] dropbox account linked")
 
 # initialize the camera and grab a reference to the raw camera capture
 #camera = PiCamera()
@@ -107,9 +94,9 @@ while beat.true():
 		0.7, (0, 0, 255), 2)
 
 	####VIDEO####
-	
+
 	if (timestamp - lastUploaded).seconds >= conf["min_upload_seconds"]:
-		
+
 		if kcw.recording:
 			print("starting stop")
 			kcw.finish()
@@ -119,19 +106,19 @@ while beat.true():
 				datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 			print("startnew")
 			kcw.start(p, cv2.VideoWriter_fourcc(*conf["videocodec"]),fps)
-		
-			
-	
+
+
+
 	# update the key frame clip buffer
 	kcw.update(frame)
-	
+
 	# check to see if the frames should be displayed to screen
 	if conf["show_video"]:
-	
-	
+
+
 		# display the security feed
 		cv2.imshow("Security Feed", frame)
-		
+
 		key = cv2.waitKey(1) & 0xFF
 
 		# if the `q` key is pressed, break from the loop
@@ -140,9 +127,9 @@ while beat.true():
 
 	# clear the stream in preparation for the next frame
 	#rawCapture.truncate(0)
-	
+
 	loopT = int((datetime.datetime.now() - loopstarttime).total_seconds() * 1000)
-	
+
 	##print(int(1000/loopT))
 	try:
 		beat.sleep()
@@ -152,10 +139,7 @@ while beat.true():
 # if we are in the middle of recording a clip, wrap it up
 if kcw.recording:
 	kcw.finish()
-	
+
 # do a bit of cleanup
 cv2.destroyAllWindows()
 vs.stop()
-	
-	
-	
