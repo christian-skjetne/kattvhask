@@ -5,6 +5,7 @@ from queue import Queue
 import time
 import cv2
 
+
 class KeyClipWriter:
     def __init__(self, bufSize=64, timeout=0.01):
         # store the maximum buffer size of frames to be kept
