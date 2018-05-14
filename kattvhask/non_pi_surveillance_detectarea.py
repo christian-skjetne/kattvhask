@@ -63,7 +63,6 @@ def moveMask(event,x,y,flags,param):
             elif x<mask2x+maskw and x>mask2x and y<mask2y+maskh and y>mask2y:
                 mask2x = x-int(maskw/2)
                 mask2y = y-int(maskh/2)
-            print(f"mask: x1={mask1x}, y1={mask1y}, x2={mask2x}, y2={mask2y}")
 
 
 # construct the argument parser and parse the arguments
@@ -173,9 +172,12 @@ while True:
         # loop over the contours
         for c in cnts:
             # if the contour is too small, ignore it
-            if cv2.contourArea(c) < conf["min_area"]:
+            contour_area = cv2.contourArea(c)
+            print("Contour area: {}".format(contour_area))
+            if contour_area < conf["min_area"]:
                 continue
 
+            print("Detected a high contour!")
             # compute the bounding box for the contour, draw it on the frame,
             # and update the text
             (x, y, w, h) = cv2.boundingRect(c)
