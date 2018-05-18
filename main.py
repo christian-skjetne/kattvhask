@@ -50,7 +50,6 @@ class Kattvhask:
     #         self.popup.grab_release()
 
     def clear(self):
-        print("Clear all rectangles")
         self.active_rect = None
         for item in self.rectangles:
             self.canvas.delete(item)
@@ -68,7 +67,6 @@ class Kattvhask:
                 bbox = self.canvas.bbox(item)
                 # print("bbox: {}".format(bbox))
                 if self.point_inside_bbox(curX, curY, bbox):
-                    print("Mouse inside item {}".format(item))
                     return item
         return None
 
@@ -118,7 +116,6 @@ class Kattvhask:
         self.rectangles.remove(rectangle_under_cursor)
         self.canvas.delete(rectangle_under_cursor)
 
-
     def on_button_single_press(self, event):
         curX = self.canvas.canvasx(event.x)
         curY = self.canvas.canvasy(event.y)
@@ -130,12 +127,10 @@ class Kattvhask:
         rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
         if not rectangle_under_cursor:
             # No rectangle under cursor
-            print("on_button_single_press: No rectangle under cursor.")
             rect = self.canvas.create_rectangle(curX, curY, curX, curY, outline='green', width=5.0, tags="rectangle")
             self.rectangles.append(rect)
             self.active_rect = rect
         else:
-            print("on_button_single_press: Rectangle under cursor: {}".format(rectangle_under_cursor))
             if self.active_rect:
                 self.canvas.itemconfig(self.active_rect, outline='red')
             self.active_rect = rectangle_under_cursor
@@ -147,11 +142,8 @@ class Kattvhask:
 
         self.prev_curX = curX
         self.prev_curY = curY
-        print("on_button_single_press: rectangle_id = {}".format(self.active_rect))
 
     def on_button_release(self, event):
-        print("on_button_release")
-
         if self.active_rect:
             self.canvas.itemconfig(self.active_rect, outline='red')
             self.active_rect = None
@@ -206,17 +198,14 @@ class Kattvhask:
             self.prev_curX, self.prev_curY = curX, curY
 
     def on_key(self, event):
-        print("Pressed: {}".format(event.char))
         if event.char == 'q':
             self.quit()
 
     def callback(self, event):
         widget = event.widget
         widget.focus_set()
-        print("clicked x={ev.x}, y={ev.y}".format(ev=event))
 
     def quit(self):
-        print("Quiting..")
         self.capture.release()
         self.root.destroy()
 
