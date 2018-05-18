@@ -15,6 +15,7 @@ class Kattvhask:
         self.image = None
         self.rectangles = []
         self.active_rect = None
+        self.moving = False
         self.prev_curX = None
         self.prev_curY = None
 
@@ -28,6 +29,7 @@ class Kattvhask:
         self.canvas.pack(expand=YES, fill=BOTH)
         # self.canvas.bind("<Button-1>", self.callback)
         # self.canvas.bind("<Double-Button-1>", self.on_button_double_click)
+        self.canvas.bind("<ButtonPress-3>", self.on_sec_btn_press)
         self.canvas.bind("<ButtonPress-1>", self.on_button_single_press)
         self.canvas.bind("<Motion>", self.on_move_press)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
@@ -78,10 +80,38 @@ class Kattvhask:
         return None
 
     def cursor_at_rectangle_border(self, curX, curY, rectangle):
+        """Returns true if the click was nearby the rectangle's border, else false"""
         bbox = self.canvas.bbox(rectangle)
         x0, y0, x1, y1 = bbox
-        item_width = self.canvas.itemcget(rectangle, "width")
-        print("cursor_at_rectangle_border: item_width={}".format(item_width))
+        item_width = int(float(self.canvas.itemcget(rectangle, "width")))
+
+        min_x_boundary = range(x0 - item_width, x0 + item_width)
+        max_x_boundary = range(x1 - item_width, x1 + item_width)
+        min_y_boundary = range(y0 - item_width, y0 + item_width)
+        max_y_boundary = range(y1 - item_width, y1 + item_width)
+
+        if curX in min_x_boundary:
+            # left side
+            if curY >= y0 - item_width and curY <= y1 + item_width:
+                # inside rectangle, so good
+                return True
+
+        if curX in max_x_boundary:
+            # right side
+            if curY >= y0 - item_width and curY <= y1 + item_width:
+                # inside rectangle, so good
+                return True
+
+        if curY in min_y_boundary:
+            # top
+            if curX >= x0 - item_width and curX <= x1 + item_width:
+                return True
+
+        if curY in max_y_boundary:
+            # bottom
+            if curX >= x0 - item_width and curX <= x1 + item_width:
+                return True
+        return False
 
     def on_button_single_press(self, event):
         curX = self.canvas.canvasx(event.x)
@@ -89,8 +119,7 @@ class Kattvhask:
         print("on_button_single_click: canvasxy({}, {}), event.xy=({}, {})".format(curX, curY, event.x, event.y))
 
         # rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
-        all_rects = self.canvas.find_withtag("rectangle")
-        print(all_rects)
+        # all_rects = self.canvas.find_withtag("rectangle")
 
         rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
         if not rectangle_under_cursor:
@@ -100,11 +129,15 @@ class Kattvhask:
             self.rectangles.append(rect)
             self.active_rect = rect
         else:
-            print("on_button_single_press: Rectangle under cursor - select it: {}".format(rectangle_under_cursor))
+            print("on_button_single_press: Rectangle under cursor: {}".format(rectangle_under_cursor))
             if self.active_rect:
                 self.canvas.itemconfig(self.active_rect, outline='red')
             self.active_rect = rectangle_under_cursor
             self.canvas.itemconfig(self.active_rect, outline='green')
+            click_rect_border = self.cursor_at_rectangle_border(curX, curY, rectangle_under_cursor)
+            if click_rect_border:
+                print("Border was clicked")
+                self.moving = True
 
         self.prev_curX = curX
         self.prev_curY = curY
@@ -116,6 +149,7 @@ class Kattvhask:
         if self.active_rect:
             self.canvas.itemconfig(self.active_rect, outline='red')
             self.active_rect = None
+            self.moving = False
             self.prev_curX = None
             self.prev_curY = None
 
@@ -125,7 +159,7 @@ class Kattvhask:
 
         if self.active_rect:
             rect = self.active_rect
-            # print("on_move_press: rect_id = {}".format(rect))
+
             coords = self.canvas.coords(rect)
             x0, y0, x1, y1 = coords
 
@@ -133,29 +167,36 @@ class Kattvhask:
             # print("on_move_press: bbox: {}, currentXY=({}, {}), prev_XY=({}, {}), event.xy=({}, {})"
             #     .format(bbox, curX, curY, self.prev_curX, self.prev_curY, event.x, event.y))
 
-            diff_x = abs(curX - self.prev_curX)
-            diff_y = abs(curY - self.prev_curY)
+            diff_x = curX - self.prev_curX
+            diff_y = curY - self.prev_curY
 
-            if curX < self.prev_curX:
-                # decrease
-                x0 -= diff_x
-                x1 += diff_x
+            if self.moving:
+                # Move instead of resize
+                self.canvas.move(self.active_rect, diff_x, diff_y)
             else:
-                # increase
-                x0 += diff_x
-                x1 -= diff_x
+                # Resize
+                diff_x = abs(diff_x)
+                diff_y = abs(diff_x)
+                if curX < self.prev_curX:
+                    # decrease
+                    x0 -= diff_x
+                    x1 += diff_x
+                else:
+                    # increase
+                    x0 += diff_x
+                    x1 -= diff_x
 
-            if curY < self.prev_curY:
-                # decrease
-                y0 -= diff_y
-                y1 += diff_y
-            else:
-                # increase
-                y0 += diff_y
-                y1 -= diff_y
+                if curY < self.prev_curY:
+                    # decrease
+                    y0 -= diff_y
+                    y1 += diff_y
+                else:
+                    # increase
+                    y0 += diff_y
+                    y1 -= diff_y
 
-            # Update item coordinates
-            self.canvas.coords(rect, x0, y0, x1, y1)
+                # Update item coordinates
+                self.canvas.coords(rect, x0, y0, x1, y1)
             self.prev_curX, self.prev_curY = curX, curY
 
     def on_key(self, event):
