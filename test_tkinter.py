@@ -29,7 +29,7 @@ class Kattvhask:
         self.canvas.pack(expand=YES, fill=BOTH)
         # self.canvas.bind("<Button-1>", self.callback)
         # self.canvas.bind("<Double-Button-1>", self.on_button_double_click)
-        self.canvas.bind("<ButtonPress-3>", self.on_sec_btn_press)
+        self.canvas.bind("<ButtonPress-3>", self.on_right_button_press)
         self.canvas.bind("<ButtonPress-1>", self.on_button_single_press)
         self.canvas.bind("<Motion>", self.on_move_press)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
@@ -112,6 +112,19 @@ class Kattvhask:
             if curX >= x0 - item_width and curX <= x1 + item_width:
                 return True
         return False
+
+    def on_right_button_press(self, event):
+        curX = self.canvas.canvasx(event.x)
+        curY = self.canvas.canvasy(event.y)
+
+        rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
+        if not rectangle_under_cursor:
+            return
+
+        # remove from canvas and internal refs
+        self.rectangles.remove(rectangle_under_cursor)
+        self.canvas.delete(rectangle_under_cursor)
+
 
     def on_button_single_press(self, event):
         curX = self.canvas.canvasx(event.x)
