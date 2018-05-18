@@ -27,9 +27,8 @@ class Kattvhask:
         self.canvas = Canvas(self.root, width=500, height=300, bd=10, bg='white')
         self.canvas.focus_set()
         self.canvas.pack(expand=YES, fill=BOTH)
-        # self.canvas.bind("<Button-1>", self.callback)
-        # self.canvas.bind("<Double-Button-1>", self.on_button_double_click)
         self.canvas.bind("<ButtonPress-3>", self.on_right_button_press)
+        # self.canvas.bind("<ButtonPress-3>", self.right_click)
         self.canvas.bind("<ButtonPress-1>", self.on_button_single_press)
         self.canvas.bind("<Motion>", self.on_move_press)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
@@ -41,20 +40,14 @@ class Kattvhask:
         b2 = Button(width=10, height=2, text='Clear', command=self.clear)
         b2.grid(row=1, column=1)
 
-    # def on_button_double_click(self, event):
-    #     print("on_button_double_click")
-    #     self.rect_start_x = self.canvas.canvasx(event.x)
-    #     self.rect_start_y = self.canvas.canvasy(event.y)
+        # self.popup = Menu(self.root, tearoff=0)
+        # self.popup.add_command(label="Remove")
 
-    #     rectangle_under_cursor = self.get_rectangle_at_point(self.rect_start_x, self.rect_start_y)
-    #     if not rectangle_under_cursor:
-    #         # No rectangle under cursor
-    #         rect = self.canvas.create_rectangle(self.rect_start_x, self.rect_start_y, self.rect_start_x - 20, self.rect_start_y - 20, outline='green', width=5.0)
-    #         self.rectangles.append(rect)
-    #         self.active_rect = rect
-    #     else:
-    #         self.active_rect = rectangle_under_cursor
-    #         self.canvas.itemconfig(self.active_rect, outline='green')
+    # def right_click(self, event):
+    #     try:
+    #         self.popup.tk_popup(event.x_root, event.y_root, 0)
+    #     finally:
+    #         self.popup.grab_release()
 
     def clear(self):
         print("Clear all rectangles")
