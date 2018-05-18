@@ -4,6 +4,7 @@ from tkinter import *
 import cv2
 from PIL import Image, ImageTk
 import time
+import itertools
 
 
 class Kattvhask:
@@ -18,6 +19,7 @@ class Kattvhask:
         self.moving = False
         self.prev_curX = None
         self.prev_curY = None
+        self.rect_border_width = 5.0
 
         self.create_gui()
         self.init_video_stream()
@@ -74,34 +76,25 @@ class Kattvhask:
         """Returns true if the click was nearby the rectangle's border, else false"""
         bbox = self.canvas.bbox(rectangle)
         x0, y0, x1, y1 = bbox
-        item_width = int(float(self.canvas.itemcget(rectangle, "width")))
+        item_width = int(self.rect_border_width) + 2
 
         min_x_boundary = range(x0 - item_width, x0 + item_width)
         max_x_boundary = range(x1 - item_width, x1 + item_width)
         min_y_boundary = range(y0 - item_width, y0 + item_width)
         max_y_boundary = range(y1 - item_width, y1 + item_width)
 
-        if curX in min_x_boundary:
-            # left side
-            if curY >= y0 - item_width and curY <= y1 + item_width:
-                # inside rectangle, so good
-                return True
+        def is_inside_x_axis(y):
+            return y >= x0 - item_width and y <= x1 + item_width
 
-        if curX in max_x_boundary:
-            # right side
-            if curY >= y0 - item_width and curY <= y1 + item_width:
-                # inside rectangle, so good
-                return True
+        def is_inside_y_axis(x):
+            return x >= y0 - item_width and x <= y1 + item_width
 
-        if curY in min_y_boundary:
-            # top
-            if curX >= x0 - item_width and curX <= x1 + item_width:
-                return True
+        if is_inside_y_axis(curY) and curY in itertools.chain(min_y_boundary, max_y_boundary):
+            return True
 
-        if curY in max_y_boundary:
-            # bottom
-            if curX >= x0 - item_width and curX <= x1 + item_width:
-                return True
+        if is_inside_x_axis(curX) and curX in itertools.chain(min_x_boundary, max_x_boundary):
+            return True
+
         return False
 
     def on_right_button_press(self, event):
@@ -127,7 +120,7 @@ class Kattvhask:
         rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
         if not rectangle_under_cursor:
             # No rectangle under cursor
-            rect = self.canvas.create_rectangle(curX, curY, curX, curY, outline='green', width=5.0, tags="rectangle")
+            rect = self.canvas.create_rectangle(curX, curY, curX, curY, outline='green', width=self.rect_border_width, tags="rectangle")
             self.rectangles.append(rect)
             self.active_rect = rect
         else:
