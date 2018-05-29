@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 
 import sys
+import asyncio
 from tkinter import *
-import cv2
-from PIL import Image, ImageTk
 import time
 import itertools
-import imutils
-import numpy as np
 from collections import deque
+from threading import Thread
+
+import numpy as np
+import cv2
+from PIL import Image, ImageTk
+import imutils
+from web_server import get_server
 
 class Kattvhask:
 
@@ -257,8 +261,6 @@ class Kattvhask:
 
         cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[1]
-        # print("Delta: {}".format(delta))
-        # print("cnts: {}".format(cnts))
 
         min_area = 1500
         detected = False
@@ -317,5 +319,20 @@ if __name__ == "__main__":
     if not imutils.is_cv3():
         print("Kattvhask needs OpenCV 3.X.")
         sys.exit(1)
+
+    print("Start websocket server..")
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+    # new_loop = asyncio.get_event_loop()
+    new_loop.run_until_complete(get_server())
+
+    def start_loop(loop):
+        loop.run_forever()
+
+    t = Thread(target=start_loop, args=(new_loop,))
+    t.start()
+
+    print("Start GUI..")
     app = Kattvhask()
     app.run()
+    t.join()
