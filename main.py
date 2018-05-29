@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 
+import sys
 from tkinter import *
 import cv2
 from PIL import Image, ImageTk
 import time
 import itertools
-
+import imutils
+import numpy as np
+from collections import deque
 
 class Kattvhask:
 
@@ -20,6 +23,9 @@ class Kattvhask:
         self.prev_curX = None
         self.prev_curY = None
         self.rect_border_width = 5.0
+
+        self.frame_queue = deque(maxlen=3)
+        self.image_acc = None
 
         self.create_gui()
         self.init_video_stream()
@@ -207,6 +213,64 @@ class Kattvhask:
         # Warmup time
         time.sleep(1)
 
+    def do_detect(self, frame):
+        # resize the frame, convert it to grayscale, and blur it
+        proc_frame = imutils.resize(frame, width=500)
+
+        # Add masks to the image
+        mask = np.zeros(proc_frame.shape, np.uint8)
+        mask[mask1y:mask1y + maskh, mask1x:mask1x + maskw] = proc_frame[mask1y:mask1y + maskh, mask1x:mask1x + maskw]
+        mask[mask2y:mask2y + maskh, mask2x:mask2x + maskw] = proc_frame[mask2y:mask2y + maskh, mask2x:mask2x + maskw]
+
+        gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+
+        # FIXME: Add proper motion detection from 'non_pi_surveillance_detectarea.py'.
+        #        Store X-nr of frames in a cyclic buffer to be written to disk if a motion
+        #        is detected!
+
+        detected = False
+        # if detected:
+        #     self.write_motion_to_disk()
+
+        return detected
+
+    @staticmethod
+    def diff_img(t0, t1, t2):
+        d1 = cv2.absdiff(t2, t1)
+        d2 = cv2.absdiff(t1, t0)
+        return cv2.bitwise_and(d1, d2)
+
+    def do_detect2(self, frame):
+        if len(self.frame_queue) < 3:
+            return False
+
+        _, _, curr = self.frame_queue
+        cv2.accumulateWeighted(curr, self.image_acc, 0.5)
+
+
+        delta = cv2.absdiff(curr, cv2.convertScaleAbs(self.image_acc))
+
+        delta_thresh = 5
+        thresh = cv2.threshold(delta, delta_thresh, 266, cv2.THRESH_BINARY)[1]
+        thresh = cv2.dilate(thresh, None, iterations=2)
+
+        cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[1]
+        # print("Delta: {}".format(delta))
+        # print("cnts: {}".format(cnts))
+
+        min_area = 1500
+        detected = False
+        for c in cnts:
+            if cv2.contourArea(c) < min_area:
+                continue
+            detected = True
+            print("Detected")
+            x, y, w, h = cv2.boundingRect(c)
+            cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
+
+
     def run(self):
         while True:
             grabbed, frame = self.capture.read()
@@ -215,6 +279,23 @@ class Kattvhask:
                     break
                 else:
                     continue
+
+            gray_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+            gray_and_blurred = cv2.GaussianBlur(gray_frame, (21, 21), 0)
+
+            # initialize accumulation
+            if self.image_acc is None:
+                self.image_acc = gray_and_blurred.copy().astype("float")
+                # self.image_acc = np.empty(np.shape(frame))
+
+            # print("first frame shape: {}".format(frame.shape))
+            # print("image_acc shape: {}".format(self.image_acc.shape))
+
+
+            # Update frame queue
+            self.frame_queue.append(gray_and_blurred)
+
+            self.do_detect2(frame)
 
             img = Image.fromarray(frame)
             b, g, r = img.split()
@@ -233,5 +314,8 @@ class Kattvhask:
 
 
 if __name__ == "__main__":
+    if not imutils.is_cv3():
+        print("Kattvhask needs OpenCV 3.X.")
+        sys.exit(1)
     app = Kattvhask()
     app.run()
