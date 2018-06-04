@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import sys
 import asyncio
@@ -28,8 +28,11 @@ class Kattvhask:
         self.prev_curY = None
         self.rect_border_width = 5.0
 
+        # For motion detection algorithm
         self.frame_queue = deque(maxlen=3)
         self.image_acc = None
+        self.motion_detected = False
+        self.good_contours_count = 0
 
         self.create_gui()
         self.init_video_stream()
@@ -217,61 +220,54 @@ class Kattvhask:
         # Warmup time
         time.sleep(1)
 
-    def do_detect(self, frame):
-        # resize the frame, convert it to grayscale, and blur it
-        proc_frame = imutils.resize(frame, width=500)
-
-        # Add masks to the image
-        mask = np.zeros(proc_frame.shape, np.uint8)
-        mask[mask1y:mask1y + maskh, mask1x:mask1x + maskw] = proc_frame[mask1y:mask1y + maskh, mask1x:mask1x + maskw]
-        mask[mask2y:mask2y + maskh, mask2x:mask2x + maskw] = proc_frame[mask2y:mask2y + maskh, mask2x:mask2x + maskw]
-
-        gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21, 21), 0)
-
-        # FIXME: Add proper motion detection from 'non_pi_surveillance_detectarea.py'.
-        #        Store X-nr of frames in a cyclic buffer to be written to disk if a motion
-        #        is detected!
-
-        detected = False
-        # if detected:
-        #     self.write_motion_to_disk()
-
-        return detected
-
-    @staticmethod
-    def diff_img(t0, t1, t2):
-        d1 = cv2.absdiff(t2, t1)
-        d2 = cv2.absdiff(t1, t0)
-        return cv2.bitwise_and(d1, d2)
-
     def do_detect2(self, frame):
         if len(self.frame_queue) < 3:
             return False
 
         _, _, curr = self.frame_queue
-        cv2.accumulateWeighted(curr, self.image_acc, 0.5)
 
+        # Create mask to the image
+        mask = np.zeros(curr.shape, np.uint8)
 
-        delta = cv2.absdiff(curr, cv2.convertScaleAbs(self.image_acc))
+        # Copy relevant portions of frame into mask
+        for roi in self.rectangles:
+            bbox = self.canvas.bbox(roi)
+            # print("bbox: {}".format(bbox))
+
+            x1, y1, x2, y2 = bbox
+            mask[y1:y2, x1:x2] = curr[y1:y2, x1:x2]
+
+        cv2.accumulateWeighted(mask, self.image_acc, 0.5)
+        delta = cv2.absdiff(mask, cv2.convertScaleAbs(self.image_acc))
 
         delta_thresh = 5
         thresh = cv2.threshold(delta, delta_thresh, 266, cv2.THRESH_BINARY)[1]
         thresh = cv2.dilate(thresh, None, iterations=2)
 
-        cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cnts = cnts[1]
+        c_mask, contours, hierachy = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         min_area = 1500
-        detected = False
-        for c in cnts:
-            if cv2.contourArea(c) < min_area:
+        found_contours_in_frame = 0
+        for c in contours:
+            # Find contours of greater size than some pre-defined area.
+            # We only want motion detection for reasonally sized movements
+            contour_area = cv2.contourArea(c)
+            if contour_area < min_area:
                 continue
-            detected = True
-            print("Detected")
-            x, y, w, h = cv2.boundingRect(c)
-            cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
 
+            self.motion_detected = True
+            self.good_contours_count += 1
+            found_contours_in_frame += 1
+
+            if self.good_contours_count > 5:
+                x, y, w, h = cv2.boundingRect(c)
+                print(f"Detected: {x}, {y} {w} {h}")
+                cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
+
+        if found_contours_in_frame == 0 and self.motion_detected:
+            print(f"No movement... Good contours: {self.good_contours_count}")
+            self.motion_detected = False
+            self.good_contours_count = 0
 
     def run(self):
         while True:
