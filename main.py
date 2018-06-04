@@ -2,6 +2,7 @@
 
 import sys
 import asyncio
+import signal
 from tkinter import *
 import time
 import itertools
@@ -212,8 +213,8 @@ class Kattvhask:
         widget.focus_set()
 
     def quit(self):
-        self.capture.release()
         self.root.destroy()
+        self.capture.release()
 
     def init_video_stream(self):
         self.capture = cv2.VideoCapture(0)
@@ -222,6 +223,9 @@ class Kattvhask:
 
     def do_detect2(self, frame):
         if len(self.frame_queue) < 3:
+            return False
+
+        if len(self.rectangles) == 0:
             return False
 
         _, _, curr = self.frame_queue
@@ -270,46 +274,49 @@ class Kattvhask:
             self.good_contours_count = 0
 
     def run(self):
-        while True:
-            grabbed, frame = self.capture.read()
-            if not grabbed:
-                if not self.capture.isOpened():
-                    break
+        try:
+            while True:
+                grabbed, frame = self.capture.read()
+                if not grabbed:
+                    if not self.capture.isOpened():
+                        break
+                    else:
+                        continue
+
+                gray_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+                gray_and_blurred = cv2.GaussianBlur(gray_frame, (21, 21), 0)
+
+                # initialize accumulation
+                if self.image_acc is None:
+                    self.image_acc = gray_and_blurred.copy().astype("float")
+                    # self.image_acc = np.empty(np.shape(frame))
+
+                # print("first frame shape: {}".format(frame.shape))
+                # print("image_acc shape: {}".format(self.image_acc.shape))
+
+
+                # Update frame queue
+                self.frame_queue.append(gray_and_blurred)
+
+                self.do_detect2(frame)
+
+                img = Image.fromarray(frame)
+                b, g, r = img.split()
+                img = Image.merge("RGB", (r, g, b))
+                photo = ImageTk.PhotoImage(image=img)
+                if not self.image:
+                    self.image = self.canvas.create_image(0, 0, image=photo, anchor=NW, tags="photo")
                 else:
-                    continue
+                    self.canvas.itemconfig(self.image, image=photo)
 
-            gray_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-            gray_and_blurred = cv2.GaussianBlur(gray_frame, (21, 21), 0)
+                if cv2.waitKey(10) == 27:
+                    break
 
-            # initialize accumulation
-            if self.image_acc is None:
-                self.image_acc = gray_and_blurred.copy().astype("float")
-                # self.image_acc = np.empty(np.shape(frame))
-
-            # print("first frame shape: {}".format(frame.shape))
-            # print("image_acc shape: {}".format(self.image_acc.shape))
-
-
-            # Update frame queue
-            self.frame_queue.append(gray_and_blurred)
-
-            self.do_detect2(frame)
-
-            img = Image.fromarray(frame)
-            b, g, r = img.split()
-            img = Image.merge("RGB", (r, g, b))
-            photo = ImageTk.PhotoImage(image=img)
-            if not self.image:
-                self.image = self.canvas.create_image(0, 0, image=photo, anchor=NW, tags="photo")
-            else:
-                self.canvas.itemconfig(self.image, image=photo)
-
-            if cv2.waitKey(10) == 27:
-                break
-
-            self.root.update()
-        self.root.mainloop()
-
+                self.root.update()
+            self.root.mainloop()
+        except KeyboardInterrupt:
+            print("User ctrl+c'ed us.. Time to quit!")
+            self.quit()
 
 if __name__ == "__main__":
     if not imutils.is_cv3():
@@ -318,17 +325,39 @@ if __name__ == "__main__":
 
     print("Start websocket server..")
     new_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(new_loop)
     # new_loop = asyncio.get_event_loop()
-    new_loop.run_until_complete(get_server())
+    # start_server = get_server()
+    # import pdb
+    # pdb.set_trace()
 
-    def start_loop(loop):
-        loop.run_forever()
+    stop_fut = asyncio.Future(loop=new_loop)
+    # new_loop.add_signal_handler(signal.SIGTERM, stop_fut.set_result, None)
+    # new_loop.run_until_complete(stop)
 
-    t = Thread(target=start_loop, args=(new_loop,))
+    def start_loop(loop, stop_fut):
+        asyncio.set_event_loop(loop)
+        # Detect and react to SIGTERM
+        print("Start asyncio in threaded loop..")
+        loop.run_until_complete(get_server(stop_fut))
+
+    def shutdown_task():
+        print("Shutdown loop")
+        loop = asyncio.get_event_loop()
+        all_tasks = asyncio.Task.all_tasks(loop=loop)
+        for t in all_tasks:
+            print(f"Task {t}")
+            t.cancel()
+        # curr_task.cancel()
+        # asyncio.get_event_loop().stop()
+        # asyncio.get_event_loop().close()
+
+    print("Creating and starting backgrund thread..")
+    t = Thread(target=start_loop, args=(new_loop, stop_fut))
     t.start()
 
     print("Start GUI..")
     app = Kattvhask()
     app.run()
+    print("GUI quited..")
+    new_loop.call_soon_threadsafe(shutdown_task)
     t.join()
