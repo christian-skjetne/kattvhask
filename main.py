@@ -8,12 +8,15 @@ import time
 import itertools
 from collections import deque
 from threading import Thread
+import functools
+import random
 
 import numpy as np
 import cv2
 from PIL import Image, ImageTk
 import imutils
 from web_server import get_server
+import web_server
 
 class Kattvhask:
 
@@ -314,9 +317,10 @@ class Kattvhask:
 
                 self.root.update()
             self.root.mainloop()
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as err:
             print("User ctrl+c'ed us.. Time to quit!")
             self.quit()
+            raise err
 
 if __name__ == "__main__":
     if not imutils.is_cv3():
@@ -325,39 +329,40 @@ if __name__ == "__main__":
 
     print("Start websocket server..")
     new_loop = asyncio.new_event_loop()
-    # new_loop = asyncio.get_event_loop()
-    # start_server = get_server()
-    # import pdb
-    # pdb.set_trace()
 
-    stop_fut = asyncio.Future(loop=new_loop)
-    # new_loop.add_signal_handler(signal.SIGTERM, stop_fut.set_result, None)
-    # new_loop.run_until_complete(stop)
-
-    def start_loop(loop, stop_fut):
+    def start_loop(loop):
         asyncio.set_event_loop(loop)
-        # Detect and react to SIGTERM
+
         print("Start asyncio in threaded loop..")
-        loop.run_until_complete(get_server(stop_fut))
+        loop.run_forever()
 
     def shutdown_task():
         print("Shutdown loop")
         loop = asyncio.get_event_loop()
         all_tasks = asyncio.Task.all_tasks(loop=loop)
-        for t in all_tasks:
-            print(f"Task {t}")
-            t.cancel()
-        # curr_task.cancel()
-        # asyncio.get_event_loop().stop()
-        # asyncio.get_event_loop().close()
+        asyncio.gather(loop=loop, *all_tasks, return_exceptions=True).cancel()
 
     print("Creating and starting backgrund thread..")
-    t = Thread(target=start_loop, args=(new_loop, stop_fut))
+    t = Thread(target=web_server.start_server, args=(new_loop,))
     t.start()
 
-    print("Start GUI..")
-    app = Kattvhask()
-    app.run()
-    print("GUI quited..")
-    new_loop.call_soon_threadsafe(shutdown_task)
+    # FIXME: Delete this - just for testing asyncio.Qeueue + websockets
+    async def producer(num, loop):
+        while True:
+            await web_server.queue.put(num + random.random())
+            await asyncio.sleep(random.random(), loop=loop)
+
+    # Start 'producer'
+    asyncio.run_coroutine_threadsafe(producer(10, new_loop), loop=new_loop)
+
+    try:
+        print("Start GUI..")
+        app = Kattvhask()
+        app.run()
+    except KeyboardInterrupt:
+        print("GUI quited..")
+        new_loop.call_soon_threadsafe(shutdown_task)
+        new_loop.stop()
+
+    # Ensure that async thread is done
     t.join()
