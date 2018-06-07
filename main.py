@@ -10,6 +10,9 @@ from collections import deque
 from threading import Thread
 import functools
 import random
+import json
+import pendulum
+from typing import Dict
 
 import numpy as np
 import cv2
@@ -18,9 +21,10 @@ import imutils
 from web_server import get_server
 import web_server
 
+
 class Kattvhask:
 
-    def __init__(self):
+    def __init__(self, loop, config : Dict=None, headless=False):
         self.root = None
         self.capture = None
         self.rect = None
@@ -37,9 +41,39 @@ class Kattvhask:
         self.image_acc = None
         self.motion_detected = False
         self.good_contours_count = 0
+        self.loop = loop
 
-        self.create_gui()
+        self.config = config
+        self.headless = headless
+
+
+        if not self.headless:
+            print("Running in UI mode")
+            self.create_gui()
+
+        self.parse_config()
         self.init_video_stream()
+
+    def parse_config(self):
+        if not self.config:
+            return
+
+        for rect in self.config.get("rectangles", []):
+            x0 = rect.get("x0")
+            y0 = rect.get("y0")
+            x1 = rect.get("x1")
+            y1 = rect.get("y1")
+
+            if not self.headless:
+                # Create tk rectangles
+                new_rect = self.canvas.create_rectangle(x0, y0, x1, y1, outline='green', width=self.rect_border_width, tags="rectangle")
+                self.canvas.itemconfig(new_rect, outline='red')
+                self.rectangles.append(new_rect)
+            else:
+                # Create 'dummy' rectangles
+                self.rectangles.append({
+                    "bbox": (x0, y0, x1, y1)
+                })
 
     def create_gui(self):
         self.root = Tk()
@@ -54,10 +88,12 @@ class Kattvhask:
         self.canvas.bind("<Key>", self.on_key)
         self.canvas.grid(row=0, column=0, columnspan=2)
 
-        b = Button(width=10, height=2, text='Quit', command=self.quit)
+        b = Button(width=10, height=1, text='Quit', command=self.quit)
         b.grid(row=1, column=0)
-        b2 = Button(width=10, height=2, text='Clear', command=self.clear)
+        b2 = Button(width=10, height=1, text='Clear', command=self.clear)
         b2.grid(row=1, column=1)
+        btn_save = Button(width=10, height=1, text='Save', command=self.save)
+        btn_save.grid(row=2, column=0)
 
         # self.popup = Menu(self.root, tearoff=0)
         # self.popup.add_command(label="Remove")
@@ -67,12 +103,33 @@ class Kattvhask:
     #         self.popup.tk_popup(event.x_root, event.y_root, 0)
     #     finally:
     #         self.popup.grab_release()
+    def save(self):
+        """Save all rectangles to a config file (json)."""
+        with open('config.json', 'w') as cfg_file:
+            print("Save setup")
+            data = {'rectangles': []}
+            for rect in self.rectangles:
+                bbox = self.canvas.bbox(rect)
+                x0, y0, x1, y1 = bbox
+                data["rectangles"].append({
+                    "x0": x0,
+                    "y0": y0,
+                    "x1": x1,
+                    "y1": y1
+                })
+            # Write dictionary to cfg_file (json serialized)
+            json.dump(data, cfg_file)
 
     def clear(self):
         self.active_rect = None
         for item in self.rectangles:
             self.canvas.delete(item)
         self.rectangles = []
+
+    def get_bbox(self, item):
+        if not self.headless:
+            return self.canvas.bbox(item)
+        return item.get("bbox")
 
     def point_inside_bbox(self, curX, curY, bbox):
         x0, y0, x1, y1 = bbox
@@ -212,11 +269,13 @@ class Kattvhask:
             self.quit()
 
     def callback(self, event):
+        print("callback")
         widget = event.widget
         widget.focus_set()
 
     def quit(self):
-        self.root.destroy()
+        if not self.headless:
+            self.root.destroy()
         self.capture.release()
 
     def init_video_stream(self):
@@ -231,6 +290,9 @@ class Kattvhask:
         if len(self.rectangles) == 0:
             return False
 
+        if self.moving or self.active_rect:
+            return False
+
         _, _, curr = self.frame_queue
 
         # Create mask to the image
@@ -238,8 +300,7 @@ class Kattvhask:
 
         # Copy relevant portions of frame into mask
         for roi in self.rectangles:
-            bbox = self.canvas.bbox(roi)
-            # print("bbox: {}".format(bbox))
+            bbox = self.get_bbox(roi)
 
             x1, y1, x2, y2 = bbox
             mask[y1:y2, x1:x2] = curr[y1:y2, x1:x2]
@@ -271,10 +332,21 @@ class Kattvhask:
                 print(f"Detected: {x}, {y} {w} {h}")
                 cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
 
+                # trigger new websocket message
+                self.notify_motion()
+
         if found_contours_in_frame == 0 and self.motion_detected:
             print(f"No movement... Good contours: {self.good_contours_count}")
             self.motion_detected = False
             self.good_contours_count = 0
+
+    def notify_motion(self):
+        # Got new motion alert
+        async def send_alert():
+            ts = pendulum.now()
+            await web_server.queue.put(f"{ts}: Motion detected!")
+
+        asyncio.run_coroutine_threadsafe(send_alert(), loop=self.loop)
 
     def run(self):
         try:
@@ -303,20 +375,22 @@ class Kattvhask:
 
                 self.do_detect2(frame)
 
-                img = Image.fromarray(frame)
-                b, g, r = img.split()
-                img = Image.merge("RGB", (r, g, b))
-                photo = ImageTk.PhotoImage(image=img)
-                if not self.image:
-                    self.image = self.canvas.create_image(0, 0, image=photo, anchor=NW, tags="photo")
-                else:
-                    self.canvas.itemconfig(self.image, image=photo)
+                if not self.headless:
+                    img = Image.fromarray(frame)
+                    b, g, r = img.split()
+                    img = Image.merge("RGB", (r, g, b))
+                    photo = ImageTk.PhotoImage(image=img)
+                    if not self.image:
+                        self.image = self.canvas.create_image(0, 0, image=photo, anchor=NW, tags="photo")
+                    else:
+                        self.canvas.itemconfig(self.image, image=photo)
+                    self.root.update()
 
-                if cv2.waitKey(10) == 27:
-                    break
+                # if cv2.waitKey(10) == 27:
+                #     break
 
-                self.root.update()
-            self.root.mainloop()
+            if not self.headless:
+                self.root.mainloop()
         except KeyboardInterrupt as err:
             print("User ctrl+c'ed us.. Time to quit!")
             self.quit()
@@ -346,18 +420,22 @@ if __name__ == "__main__":
     t = Thread(target=web_server.start_server, args=(new_loop,))
     t.start()
 
-    # FIXME: Delete this - just for testing asyncio.Qeueue + websockets
-    async def producer(num, loop):
-        while True:
-            await web_server.queue.put(num + random.random())
-            await asyncio.sleep(random.random(), loop=loop)
-
-    # Start 'producer'
-    asyncio.run_coroutine_threadsafe(producer(10, new_loop), loop=new_loop)
-
     try:
         print("Start GUI..")
-        app = Kattvhask()
+        cfg = None
+        headless = False
+        if len(sys.argv) > 1:
+            if '-c' in sys.argv[1:]:
+                print("Reading config file.")
+                with open('config.json', 'r') as f:
+                    cfg = json.load(f)
+
+            if '-q' in sys.argv[1:]:
+                print("Headless mode")
+                headless = True
+
+
+        app = Kattvhask(new_loop, config=cfg, headless=headless)
         app.run()
     except KeyboardInterrupt:
         print("GUI quited..")
