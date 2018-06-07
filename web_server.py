@@ -18,6 +18,11 @@ async def echo(websocket, path):
 
 async def kattvhask_ws(websocket, path):
     print(f"New connection.. path -> {path}")
+    cmd = await websocket.recv()
+
+    if not cmd.startswith("CONN"):
+        await websockets.send("Bad command")
+        return
 
     # routes = {
     #     '/events': events,
@@ -33,6 +38,7 @@ async def kattvhask_ws(websocket, path):
             await websocket.send(str(event))
     except websockets.exceptions.ConnectionClosed:
         print("Connection closed.")
+
     # if path not in routes:
     #     return
 
