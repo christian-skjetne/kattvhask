@@ -20,6 +20,7 @@ from PIL import Image, ImageTk
 import imutils
 from web_server import get_server
 import web_server
+from keyclipwriter import KeyClipWriter
 
 
 class Kattvhask:
@@ -45,7 +46,7 @@ class Kattvhask:
 
         self.config = config
         self.headless = headless
-
+        self.kcw = KeyClipWriter("output")
 
         if not self.headless:
             print("Running in UI mode")
@@ -330,7 +331,9 @@ class Kattvhask:
             if self.good_contours_count > 5:
                 x, y, w, h = cv2.boundingRect(c)
                 print(f"Detected: {x}, {y} {w} {h}")
-                cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
+                if not self.headless:
+                    # draws a green rectangle surrounding the contour with motion
+                    cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
 
                 # trigger new websocket message
                 self.notify_motion()
