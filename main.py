@@ -368,10 +368,24 @@ class Kattvhask:
         self.kcw.update(frame)
 
     def notify_motion(self):
-        # Got new motion alert
         async def send_alert():
             ts = pendulum.now()
-            await web_server.queue.put(f"{ts}: Motion detected!")
+            event = {
+                "when": ts,
+                "body": "Motion detected"
+            }
+            await web_server.queue.put(event)
+
+
+        if self.last_notification is not None:
+            period = pendulum.now() - self.last_notification
+            if period.seconds < 5:
+                print("less than 5 sec since last notification")
+                return
+            else:
+                self.last_notification = pendulum.now()
+        else:
+            self.last_notification = pendulum.now()
 
         asyncio.run_coroutine_threadsafe(send_alert(), loop=self.loop)
 
