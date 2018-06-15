@@ -47,6 +47,8 @@ class Kattvhask:
         self.config = config
         self.headless = headless
         self.kcw = KeyClipWriter("output")
+        self.last_notification = None
+        self.last_contour_identified = None
 
         if not self.headless:
             print("Running in UI mode")
@@ -187,10 +189,7 @@ class Kattvhask:
     def on_button_single_press(self, event):
         curX = self.canvas.canvasx(event.x)
         curY = self.canvas.canvasy(event.y)
-        print("on_button_single_click: canvasxy({}, {}), event.xy=({}, {})".format(curX, curY, event.x, event.y))
-
-        # rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
-        # all_rects = self.canvas.find_withtag("rectangle")
+        # print("on_button_single_click: canvasxy({}, {}), event.xy=({}, {})".format(curX, curY, event.x, event.y))
 
         rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
         if not rectangle_under_cursor:
@@ -205,7 +204,7 @@ class Kattvhask:
             self.canvas.itemconfig(self.active_rect, outline='green')
             click_rect_border = self.cursor_at_rectangle_border(curX, curY, rectangle_under_cursor)
             if click_rect_border:
-                print("Border was clicked")
+                # print("Border was clicked")
                 self.moving = True
 
         self.prev_curX = curX
@@ -270,7 +269,6 @@ class Kattvhask:
             self.quit()
 
     def callback(self, event):
-        print("callback")
         widget = event.widget
         widget.focus_set()
 
@@ -284,7 +282,16 @@ class Kattvhask:
         # Warmup time
         time.sleep(1)
 
-    def do_detect2(self, frame):
+    def do_detect(self, frame):
+        """
+        This method calculates and identifies actual movement inside the
+        regions of interest.
+
+        If movement is identified a video capture will be written to the
+        designated output area based on the current date and timestamp.
+
+        Return False / True
+        """
         if len(self.frame_queue) < 3:
             return False
 
@@ -328,20 +335,37 @@ class Kattvhask:
             self.good_contours_count += 1
             found_contours_in_frame += 1
 
+            # minimum 5 good frames before tag as 'motion'
             if self.good_contours_count > 5:
                 x, y, w, h = cv2.boundingRect(c)
-                print(f"Detected: {x}, {y} {w} {h}")
                 if not self.headless:
                     # draws a green rectangle surrounding the contour with motion
                     cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
 
+                if not self.kcw.recording:
+                    print(f"Detected: {x}, {y} {w} {h}")
+                    video_writer = cv2.VideoWriter_fourcc(*"DIVX")
+                    fps = 20
+                    self.kcw.start(video_writer, fps)
+
                 # trigger new websocket message
                 self.notify_motion()
 
-        if found_contours_in_frame == 0 and self.motion_detected:
-            print(f"No movement... Good contours: {self.good_contours_count}")
-            self.motion_detected = False
-            self.good_contours_count = 0
+                self.last_contour_identified = pendulum.now()
+
+        if found_contours_in_frame == 0 and self.motion_detected and self.kcw.recording:
+            now = pendulum.now()
+            # since_start = now - self.kcw.start_time
+            since_start = now - self.last_contour_identified
+            if since_start.seconds > 4 and self.kcw.recording:
+                print("5 seconds after no motion detected. Stop recording.")
+                self.kcw.finish()
+                print(f"No movement... Good contours: {self.good_contours_count}")
+                self.motion_detected = False
+                self.good_contours_count = 0
+
+        # Always store frame in circular buffer
+        self.kcw.update(frame)
 
     def notify_motion(self):
         # Got new motion alert
@@ -367,16 +391,11 @@ class Kattvhask:
                 # initialize accumulation
                 if self.image_acc is None:
                     self.image_acc = gray_and_blurred.copy().astype("float")
-                    # self.image_acc = np.empty(np.shape(frame))
-
-                # print("first frame shape: {}".format(frame.shape))
-                # print("image_acc shape: {}".format(self.image_acc.shape))
-
 
                 # Update frame queue
                 self.frame_queue.append(gray_and_blurred)
 
-                self.do_detect2(frame)
+                self.do_detect(frame)
 
                 if not self.headless:
                     img = Image.fromarray(frame)
@@ -401,7 +420,7 @@ class Kattvhask:
 
 if __name__ == "__main__":
     if not imutils.is_cv3():
-        print("Kattvhask needs OpenCV 3.X.")
+        print("Kattvhask needs OpenCV 3.X")
         sys.exit(1)
 
     print("Start websocket server..")
