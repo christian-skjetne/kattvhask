@@ -54,7 +54,6 @@ class Kattvhask:
             print("Running in UI mode")
             self.create_gui()
 
-        self.parse_config()
         self.init_video_stream()
 
     def parse_config(self):
@@ -79,37 +78,33 @@ class Kattvhask:
                 })
 
     def create_gui(self):
+        """Create the Tk GUI elements if we are not running in 'headless' mode.
+        Typically used to verify the position of the camera and the regions of interest.
+        """
         self.root = Tk()
         self.canvas = Canvas(self.root, width=500, height=300, bd=10, bg='white')
         self.canvas.focus_set()
         self.canvas.pack(expand=YES, fill=BOTH)
         self.canvas.bind("<ButtonPress-3>", self.on_right_button_press)
-        # self.canvas.bind("<ButtonPress-3>", self.right_click)
         self.canvas.bind("<ButtonPress-1>", self.on_button_single_press)
         self.canvas.bind("<Motion>", self.on_move_press)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
         self.canvas.bind("<Key>", self.on_key)
         self.canvas.grid(row=0, column=0, columnspan=2)
 
+        # Benjamin Buttons..
         b = Button(width=10, height=1, text='Quit', command=self.quit)
         b.grid(row=1, column=0)
+
         b2 = Button(width=10, height=1, text='Clear', command=self.clear)
         b2.grid(row=1, column=1)
+
         btn_save = Button(width=10, height=1, text='Save', command=self.save)
         btn_save.grid(row=2, column=0)
 
-        # self.popup = Menu(self.root, tearoff=0)
-        # self.popup.add_command(label="Remove")
-
-    # def right_click(self, event):
-    #     try:
-    #         self.popup.tk_popup(event.x_root, event.y_root, 0)
-    #     finally:
-    #         self.popup.grab_release()
     def save(self):
         """Save all rectangles to a config file (json)."""
         with open('config.json', 'w') as cfg_file:
-            print("Save setup")
             data = {'rectangles': []}
             for rect in self.rectangles:
                 bbox = self.canvas.bbox(rect)
@@ -368,7 +363,12 @@ class Kattvhask:
         self.kcw.update(frame)
 
     def notify_motion(self):
+
         async def send_alert():
+            """
+            coroutine that will construct the 'event' to pass to our
+            async websocket server.
+            """
             ts = pendulum.now()
             event = {
                 "when": ts,
@@ -380,13 +380,13 @@ class Kattvhask:
         if self.last_notification is not None:
             period = pendulum.now() - self.last_notification
             if period.seconds < 5:
-                print("less than 5 sec since last notification")
                 return
             else:
                 self.last_notification = pendulum.now()
         else:
             self.last_notification = pendulum.now()
 
+        # Pass the coroutine to our asyncio event loop for execution
         asyncio.run_coroutine_threadsafe(send_alert(), loop=self.loop)
 
     def run(self):
@@ -418,12 +418,13 @@ class Kattvhask:
                     photo = ImageTk.PhotoImage(image=img)
                     if not self.image:
                         self.image = self.canvas.create_image(0, 0, image=photo, anchor=NW, tags="photo")
+
+                        # Need to parse config after the initial image is set. Or else our rectangles
+                        # won't be drawn on top of the image canvas.
+                        self.parse_config()
                     else:
                         self.canvas.itemconfig(self.image, image=photo)
                     self.root.update()
-
-                # if cv2.waitKey(10) == 27:
-                #     break
 
             if not self.headless:
                 self.root.mainloop()
