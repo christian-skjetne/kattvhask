@@ -3,6 +3,7 @@
 import sys
 import asyncio
 import signal
+import logging
 from tkinter import *
 import time
 import itertools
@@ -13,6 +14,7 @@ import random
 import json
 import pendulum
 from typing import Dict
+import click
 
 import numpy as np
 import cv2
@@ -21,11 +23,18 @@ import imutils
 from web_server import get_server
 import web_server
 from keyclipwriter import KeyClipWriter
+import handlers
+import logconfig
+
+
+LOG = logging.getLogger("kattvhask")
+LOG.addHandler(logging.StreamHandler(sys.stdout))
+LOG.setLevel(logging.DEBUG)
 
 
 class Kattvhask:
 
-    def __init__(self, loop, config : Dict=None, headless=False):
+    def __init__(self, loop, config : Dict=None, headless=False, **kw):
         self.root = None
         self.capture = None
         self.rect = None
@@ -50,8 +59,10 @@ class Kattvhask:
         self.last_notification = None
         self.last_contour_identified = None
 
+        self.mqtt = kw.get("mqtt", None)
+
         if not self.headless:
-            print("Running in UI mode")
+            LOG.info("Running in UI mode")
             self.create_gui()
 
         self.init_video_stream()
@@ -338,7 +349,7 @@ class Kattvhask:
                     cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
 
                 if not self.kcw.recording:
-                    print(f"Detected: {x}, {y} {w} {h}")
+                    LOG.info(f"Detected: {x}, {y} {w} {h}")
                     video_writer = cv2.VideoWriter_fourcc(*"DIVX")
                     fps = 20
                     self.kcw.start(video_writer, fps)
@@ -353,9 +364,9 @@ class Kattvhask:
             # since_start = now - self.kcw.start_time
             since_start = now - self.last_contour_identified
             if since_start.seconds > 4 and self.kcw.recording:
-                print("5 seconds after no motion detected. Stop recording.")
+                LOG.info("5 seconds after no motion detected. Stop recording.")
                 self.kcw.finish()
-                print(f"No movement... Good contours: {self.good_contours_count}")
+                LOG.info(f"No movement... Good contours: {self.good_contours_count}")
                 self.motion_detected = False
                 self.good_contours_count = 0
 
@@ -388,6 +399,14 @@ class Kattvhask:
 
         # Pass the coroutine to our asyncio event loop for execution
         asyncio.run_coroutine_threadsafe(send_alert(), loop=self.loop)
+
+        if self.mqtt:
+            ts = pendulum.now()
+            event = {
+                "when": ts,
+                "body": "Motion detected"
+            }
+            self.mqtt(event)
 
     def run(self):
         try:
@@ -429,55 +448,80 @@ class Kattvhask:
             if not self.headless:
                 self.root.mainloop()
         except KeyboardInterrupt as err:
-            print("User ctrl+c'ed us.. Time to quit!")
+            LOG.info("User ctrl+c'ed us.. Time to quit!")
             self.quit()
             raise err
 
-if __name__ == "__main__":
+
+@click.command()
+@click.option('--loglevel',
+             default='INFO',
+             type=click.Choice(
+                 ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+             ),
+             help="The level of logging output to include")
+@click.option("--config",
+             default='config.json',
+             type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True),
+             help='Configuration file')
+@click.option('--headless',
+             default=True,
+             is_flag=True,
+             type=bool,
+             help="If true then run in headless mode (without any GUI)")
+@click.option('--mqtt-host',
+             default=None,
+             help="Hostname / IP of MQTT server")
+@click.option('--mqtt-username',
+             default=None,
+             help="MQTT username")
+@click.option('--mqtt-pw',
+             default=None,
+             help="MQTT password")
+def main(loglevel, config, headless, mqtt_host, mqtt_username, mqtt_pw):
+    logconfig.init(loglevel=getattr(logging, loglevel))
     if not imutils.is_cv3():
-        print("Kattvhask needs OpenCV 3.X")
+        LOG.info("Kattvhask needs OpenCV 3.X")
         sys.exit(1)
 
-    print("Start websocket server..")
+    LOG.info("Start websocket server..")
     new_loop = asyncio.new_event_loop()
 
     def start_loop(loop):
         asyncio.set_event_loop(loop)
 
-        print("Start asyncio in threaded loop..")
+        LOG.info("Start asyncio in threaded loop..")
         loop.run_forever()
 
     def shutdown_task():
-        print("Shutdown loop")
+        LOG.info("Shutdown loop")
         loop = asyncio.get_event_loop()
         all_tasks = asyncio.Task.all_tasks(loop=loop)
         asyncio.gather(loop=loop, *all_tasks, return_exceptions=True).cancel()
 
-    print("Creating and starting backgrund thread..")
+    LOG.info("Creating and starting backgrund thread..")
     t = Thread(target=web_server.start_server, args=(new_loop,))
     t.start()
 
     try:
-        print("Start GUI..")
         cfg = None
-        headless = False
-        if len(sys.argv) > 1:
-            if '-c' in sys.argv[1:]:
-                print("Reading config file.")
-                with open('config.json', 'r') as f:
-                    cfg = json.load(f)
+        with open(config, 'r') as f:
+            cfg = json.load(f)
 
-            if '-q' in sys.argv[1:]:
-                print("Headless mode")
-                headless = True
+        mqtt_handler = None
+        if mqtt_host:
+            mqtt_handler = handlers.Mqtt("kattvhask", mqtt_host, mqtt_username, mqtt_pw)
 
-
-        app = Kattvhask(new_loop, config=cfg, headless=headless)
+        app = Kattvhask(new_loop, config=cfg, headless=headless, mqtt=mqtt_handler)
         app.run()
+
     except KeyboardInterrupt:
-        print("GUI quited..")
+        LOG.info("GUI quited..")
         new_loop.call_soon_threadsafe(shutdown_task)
         new_loop.stop()
 
     # Ensure that async thread is done
     t.join()
+
+if __name__ == "__main__":
+    main()
