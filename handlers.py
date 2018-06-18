@@ -6,8 +6,6 @@ import datetime
 
 
 LOG = logging.getLogger("kattvhask")
-LOG.addHandler(logging.StreamHandler(sys.stdout))
-LOG.setLevel(logging.DEBUG)
 
 def event_msg_converter(o):
     if isinstance(o, datetime.datetime):
