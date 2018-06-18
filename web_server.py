@@ -18,12 +18,12 @@ async def echo(websocket, path):
 
 async def kattvhask_ws(websocket, path):
     print(f"New connection.. path -> {path}")
-    cmd = await websocket.recv()
+    # cmd = await websocket.recv()
 
-    if not cmd.startswith("CONN"):
-        await websockets.send("Bad command")
-        return
-
+    # if not cmd.startswith("CONN"):
+    #     await websockets.send("Bad command")
+    #     return
+    print("dir(websocket): {}".format(dir(websockets)))
     # routes = {
     #     '/events': events,
     #     '/echo': echo

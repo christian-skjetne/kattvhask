@@ -3,6 +3,7 @@
 import sys
 import asyncio
 import signal
+import logging
 from tkinter import *
 import time
 import itertools
@@ -13,6 +14,7 @@ import random
 import json
 import pendulum
 from typing import Dict
+import click
 
 import numpy as np
 import cv2
@@ -21,11 +23,18 @@ import imutils
 from web_server import get_server
 import web_server
 from keyclipwriter import KeyClipWriter
+import handlers
+import logconfig
+
+
+LOG = logging.getLogger("kattvhask")
+LOG.addHandler(logging.StreamHandler(sys.stdout))
+LOG.setLevel(logging.DEBUG)
 
 
 class Kattvhask:
 
-    def __init__(self, loop, config : Dict=None, headless=False):
+    def __init__(self, loop, config : Dict=None, headless=False, **kw):
         self.root = None
         self.capture = None
         self.rect = None
@@ -47,12 +56,15 @@ class Kattvhask:
         self.config = config
         self.headless = headless
         self.kcw = KeyClipWriter("output")
+        self.last_notification = None
+        self.last_contour_identified = None
+
+        self.mqtt = kw.get("mqtt", None)
 
         if not self.headless:
-            print("Running in UI mode")
+            LOG.info("Running in UI mode")
             self.create_gui()
 
-        self.parse_config()
         self.init_video_stream()
 
     def parse_config(self):
@@ -77,37 +89,33 @@ class Kattvhask:
                 })
 
     def create_gui(self):
+        """Create the Tk GUI elements if we are not running in 'headless' mode.
+        Typically used to verify the position of the camera and the regions of interest.
+        """
         self.root = Tk()
         self.canvas = Canvas(self.root, width=500, height=300, bd=10, bg='white')
         self.canvas.focus_set()
         self.canvas.pack(expand=YES, fill=BOTH)
         self.canvas.bind("<ButtonPress-3>", self.on_right_button_press)
-        # self.canvas.bind("<ButtonPress-3>", self.right_click)
         self.canvas.bind("<ButtonPress-1>", self.on_button_single_press)
         self.canvas.bind("<Motion>", self.on_move_press)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
         self.canvas.bind("<Key>", self.on_key)
         self.canvas.grid(row=0, column=0, columnspan=2)
 
+        # Benjamin Buttons..
         b = Button(width=10, height=1, text='Quit', command=self.quit)
         b.grid(row=1, column=0)
+
         b2 = Button(width=10, height=1, text='Clear', command=self.clear)
         b2.grid(row=1, column=1)
+
         btn_save = Button(width=10, height=1, text='Save', command=self.save)
         btn_save.grid(row=2, column=0)
 
-        # self.popup = Menu(self.root, tearoff=0)
-        # self.popup.add_command(label="Remove")
-
-    # def right_click(self, event):
-    #     try:
-    #         self.popup.tk_popup(event.x_root, event.y_root, 0)
-    #     finally:
-    #         self.popup.grab_release()
     def save(self):
         """Save all rectangles to a config file (json)."""
         with open('config.json', 'w') as cfg_file:
-            print("Save setup")
             data = {'rectangles': []}
             for rect in self.rectangles:
                 bbox = self.canvas.bbox(rect)
@@ -187,10 +195,7 @@ class Kattvhask:
     def on_button_single_press(self, event):
         curX = self.canvas.canvasx(event.x)
         curY = self.canvas.canvasy(event.y)
-        print("on_button_single_click: canvasxy({}, {}), event.xy=({}, {})".format(curX, curY, event.x, event.y))
-
-        # rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
-        # all_rects = self.canvas.find_withtag("rectangle")
+        # print("on_button_single_click: canvasxy({}, {}), event.xy=({}, {})".format(curX, curY, event.x, event.y))
 
         rectangle_under_cursor = self.get_rectangle_at_point(curX, curY)
         if not rectangle_under_cursor:
@@ -205,7 +210,7 @@ class Kattvhask:
             self.canvas.itemconfig(self.active_rect, outline='green')
             click_rect_border = self.cursor_at_rectangle_border(curX, curY, rectangle_under_cursor)
             if click_rect_border:
-                print("Border was clicked")
+                # print("Border was clicked")
                 self.moving = True
 
         self.prev_curX = curX
@@ -270,7 +275,6 @@ class Kattvhask:
             self.quit()
 
     def callback(self, event):
-        print("callback")
         widget = event.widget
         widget.focus_set()
 
@@ -284,7 +288,16 @@ class Kattvhask:
         # Warmup time
         time.sleep(1)
 
-    def do_detect2(self, frame):
+    def do_detect(self, frame):
+        """
+        This method calculates and identifies actual movement inside the
+        regions of interest.
+
+        If movement is identified a video capture will be written to the
+        designated output area based on the current date and timestamp.
+
+        Return False / True
+        """
         if len(self.frame_queue) < 3:
             return False
 
@@ -328,28 +341,72 @@ class Kattvhask:
             self.good_contours_count += 1
             found_contours_in_frame += 1
 
+            # minimum 5 good frames before tag as 'motion'
             if self.good_contours_count > 5:
                 x, y, w, h = cv2.boundingRect(c)
-                print(f"Detected: {x}, {y} {w} {h}")
                 if not self.headless:
                     # draws a green rectangle surrounding the contour with motion
                     cv2.rectangle(frame, (x, y), (x + w, y + w), (0, 255, 0), 2)
 
+                if not self.kcw.recording:
+                    LOG.info(f"Detected: {x}, {y} {w} {h}")
+                    video_writer = cv2.VideoWriter_fourcc(*"DIVX")
+                    fps = 20
+                    self.kcw.start(video_writer, fps)
+
                 # trigger new websocket message
                 self.notify_motion()
 
-        if found_contours_in_frame == 0 and self.motion_detected:
-            print(f"No movement... Good contours: {self.good_contours_count}")
-            self.motion_detected = False
-            self.good_contours_count = 0
+                self.last_contour_identified = pendulum.now()
+
+        if found_contours_in_frame == 0 and self.motion_detected and self.kcw.recording:
+            now = pendulum.now()
+            # since_start = now - self.kcw.start_time
+            since_start = now - self.last_contour_identified
+            if since_start.seconds > 4 and self.kcw.recording:
+                LOG.info("5 seconds after no motion detected. Stop recording.")
+                self.kcw.finish()
+                LOG.info(f"No movement... Good contours: {self.good_contours_count}")
+                self.motion_detected = False
+                self.good_contours_count = 0
+
+        # Always store frame in circular buffer
+        self.kcw.update(frame)
 
     def notify_motion(self):
-        # Got new motion alert
-        async def send_alert():
-            ts = pendulum.now()
-            await web_server.queue.put(f"{ts}: Motion detected!")
 
+        async def send_alert():
+            """
+            coroutine that will construct the 'event' to pass to our
+            async websocket server.
+            """
+            ts = pendulum.now()
+            event = {
+                "when": ts,
+                "body": "Motion detected"
+            }
+            await web_server.queue.put(event)
+
+
+        if self.last_notification is not None:
+            period = pendulum.now() - self.last_notification
+            if period.seconds < 5:
+                return
+            else:
+                self.last_notification = pendulum.now()
+        else:
+            self.last_notification = pendulum.now()
+
+        # Pass the coroutine to our asyncio event loop for execution
         asyncio.run_coroutine_threadsafe(send_alert(), loop=self.loop)
+
+        if self.mqtt:
+            ts = pendulum.now()
+            event = {
+                "when": ts,
+                "body": "Motion detected"
+            }
+            self.mqtt(event)
 
     def run(self):
         try:
@@ -367,16 +424,11 @@ class Kattvhask:
                 # initialize accumulation
                 if self.image_acc is None:
                     self.image_acc = gray_and_blurred.copy().astype("float")
-                    # self.image_acc = np.empty(np.shape(frame))
-
-                # print("first frame shape: {}".format(frame.shape))
-                # print("image_acc shape: {}".format(self.image_acc.shape))
-
 
                 # Update frame queue
                 self.frame_queue.append(gray_and_blurred)
 
-                self.do_detect2(frame)
+                self.do_detect(frame)
 
                 if not self.headless:
                     img = Image.fromarray(frame)
@@ -385,65 +437,91 @@ class Kattvhask:
                     photo = ImageTk.PhotoImage(image=img)
                     if not self.image:
                         self.image = self.canvas.create_image(0, 0, image=photo, anchor=NW, tags="photo")
+
+                        # Need to parse config after the initial image is set. Or else our rectangles
+                        # won't be drawn on top of the image canvas.
+                        self.parse_config()
                     else:
                         self.canvas.itemconfig(self.image, image=photo)
                     self.root.update()
 
-                # if cv2.waitKey(10) == 27:
-                #     break
-
             if not self.headless:
                 self.root.mainloop()
         except KeyboardInterrupt as err:
-            print("User ctrl+c'ed us.. Time to quit!")
+            LOG.info("User ctrl+c'ed us.. Time to quit!")
             self.quit()
             raise err
 
-if __name__ == "__main__":
+
+@click.command()
+@click.option('--loglevel',
+             default='INFO',
+             type=click.Choice(
+                 ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+             ),
+             help="The level of logging output to include")
+@click.option("--config",
+             default='config.json',
+             type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True),
+             help='Configuration file')
+@click.option('--headless',
+             default=True,
+             is_flag=True,
+             type=bool,
+             help="If true then run in headless mode (without any GUI)")
+@click.option('--mqtt-host',
+             default=None,
+             help="Hostname / IP of MQTT server")
+@click.option('--mqtt-username',
+             default=None,
+             help="MQTT username")
+@click.option('--mqtt-pw',
+             default=None,
+             help="MQTT password")
+def main(loglevel, config, headless, mqtt_host, mqtt_username, mqtt_pw):
+    logconfig.init(loglevel=getattr(logging, loglevel))
     if not imutils.is_cv3():
-        print("Kattvhask needs OpenCV 3.X.")
+        LOG.info("Kattvhask needs OpenCV 3.X")
         sys.exit(1)
 
-    print("Start websocket server..")
+    LOG.info("Start websocket server..")
     new_loop = asyncio.new_event_loop()
 
     def start_loop(loop):
         asyncio.set_event_loop(loop)
 
-        print("Start asyncio in threaded loop..")
+        LOG.info("Start asyncio in threaded loop..")
         loop.run_forever()
 
     def shutdown_task():
-        print("Shutdown loop")
+        LOG.info("Shutdown loop")
         loop = asyncio.get_event_loop()
         all_tasks = asyncio.Task.all_tasks(loop=loop)
         asyncio.gather(loop=loop, *all_tasks, return_exceptions=True).cancel()
 
-    print("Creating and starting backgrund thread..")
+    LOG.info("Creating and starting backgrund thread..")
     t = Thread(target=web_server.start_server, args=(new_loop,))
     t.start()
 
     try:
-        print("Start GUI..")
         cfg = None
-        headless = False
-        if len(sys.argv) > 1:
-            if '-c' in sys.argv[1:]:
-                print("Reading config file.")
-                with open('config.json', 'r') as f:
-                    cfg = json.load(f)
+        with open(config, 'r') as f:
+            cfg = json.load(f)
 
-            if '-q' in sys.argv[1:]:
-                print("Headless mode")
-                headless = True
+        mqtt_handler = None
+        if mqtt_host:
+            mqtt_handler = handlers.Mqtt("kattvhask", mqtt_host, mqtt_username, mqtt_pw)
 
-
-        app = Kattvhask(new_loop, config=cfg, headless=headless)
+        app = Kattvhask(new_loop, config=cfg, headless=headless, mqtt=mqtt_handler)
         app.run()
+
     except KeyboardInterrupt:
-        print("GUI quited..")
+        LOG.info("GUI quited..")
         new_loop.call_soon_threadsafe(shutdown_task)
         new_loop.stop()
 
     # Ensure that async thread is done
     t.join()
+
+if __name__ == "__main__":
+    main()
