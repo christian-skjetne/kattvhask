@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Adding mouse control</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="googlebot" content="noindex, nofollow">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <link rel="stylesheet" type="text/css" href="/css/result-light.css">
+
+  <style type="text/css">
+  </style>
+
+</head>
+<body>
+  <!-- Learn about this code on MDN: https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Advanced_animations -->
+
+<canvas id="canvas" style="border: 1px solid" width="600" height="300"></canvas>
+<br/>
+
+<div id="ctrlButtons" style="padding: 0.5em; margin: 15px;">
+  <canvas id="plussBtn" style="border: 1px solid" width="60" height="60"></canvas>
+  <canvas id="minusBtn" style="border: 1px solid" width="60" height="60"></canvas>
+  <canvas id="saveBtn" style="border: 1px solid" width="100" height="60"></canvas>
+  <canvas id="addBtn" style="border: 1px solid" width="100" height="60"></canvas>
+  <canvas id="removeBtn" style="border: 1px solid" width="100" height="60"></canvas>
+</div>
+
+  <script type="text/javascript">
+    // Polyfill to support 'indexOf', since IE7 and IE8 has sparse support for that..
+    Array.prototype.indexOf || (Array.prototype.indexOf = function(d, e) {
+        var a;
+        if (null == this) throw new TypeError('"this" is null or not defined');
+        var c = Object(this),
+            b = c.length >>> 0;
+        if (0 === b) return -1;
+        a = +e || 0;
+        Infinity === Math.abs(a) && (a = 0);
+        if (a >= b) return -1;
+        for (a = Math.max(0 <= a ? a : b - Math.abs(a), 0); a < b;) {
+            if (a in c && c[a] === d) return a;
+            a++
+        }
+        return -1
+    });
+
+    var canvas = document.getElementById('canvas');
+    var ctx = canvas.getContext('2d');
+
+    // control buttons
+    var plussBtn = document.getElementById('plussBtn');
+    var ctx2 = plussBtn.getContext('2d');
+    var minusBtn = document.getElementById('minusBtn');
+    var ctx3 = minusBtn.getContext('2d');
+    var saveBtn = document.getElementById('saveBtn');
+    var ctx4 = saveBtn.getContext('2d');
+    var addBtn = document.getElementById('addBtn');
+    var ctx5 = addBtn.getContext('2d');
+    var removeBtn = document.getElementById('removeBtn');
+    var ctx6 = removeBtn.getContext('2d');
+    var raf;
+    var running = false;
+    var lastid = 0;
+    var rectangles = [];
+    var dragging = false;
+
+    // Control buttons
+    var pluss = {
+      x:30,
+      y:30,
+      draw:function() {
+        ctx2.font = '48px monospace';
+        ctx2.textAlign="center";
+        ctx2.textBaseline = "middle";
+        ctx2.fillText("+",this.x,this.y);
+      }
+    }
+
+    var minus = {
+      x:30,
+      y:30,
+      draw:function() {
+        ctx3.font = '48px monospace';
+        ctx3.textAlign="center";
+        ctx3.textBaseline = "middle";
+        ctx3.fillText("-",this.x,this.y);
+      }
+    }
+
+    var save = {
+      x:50,
+      y:30,
+      draw:function() {
+        ctx4.font = '32px monospace';
+        ctx4.textAlign="center";
+        ctx4.textBaseline = "middle";
+        ctx4.fillText("Save",this.x,this.y);
+      }
+    }
+
+    var add = {
+      x:50,
+      y:30,
+      draw:function() {
+        ctx5.font = '32px monospace';
+        ctx5.textAlign="center";
+        ctx5.textBaseline = "middle";
+        ctx5.fillText("Add",this.x,this.y);
+      }
+    }
+
+    var remove = {
+      x:50,
+      y:30,
+      draw:function() {
+        ctx6.font = '32px monospace';
+        ctx6.textAlign="center";
+        ctx6.textBaseline = "middle";
+        ctx6.fillText("Rem",this.x,this.y);
+      }
+    }
+
+    // main canvas background image
+    // TODO: Replace with a continous flow of frames from WebSocket
+    var image = new Image();
+    image.src = "https://www.wabe.org/wp-content/uploads/2017/04/AP_17090575280187-e1491229126347-600x300.jpg"
+    image.addEventListener('load', function() {
+      kattvhask.clear();
+      kattvhask.drawRectangles();
+    }, false);
+
+    // Main kattvhask object. Encapsulates all interactions and objects on the canvas
+    var kattvhask = {
+      rectangles: [],
+      selectedRect: null,
+      dragging: false,
+      lastid: 0,
+      canvas: null,
+
+      addRectangle: function() {
+        const rect = {
+          id: lastid++,
+          x: 100,
+          y: 100,
+          size: 25,
+          selected: false,
+          color: 'blue',
+          selColor: 'red',
+          draw: function() {
+            ctx.lineWidth = 5;
+            if(this.selected)
+              ctx.strokeStyle = this.selColor;
+            else
+              ctx.strokeStyle = this.color;
+            ctx.strokeRect(this.x-this.size/2, this.y-this.size/2, this.size, this.size);
+
+          }
+        }
+        this.rectangles.push(rect);
+        return rect;
+      },
+
+      onClick: function(e) {
+        let coords = mouse(this.canvas, e);
+        let nr = this.rectangles.length;
+        console.log("loop over "+nr+" rects. Coords: ", coords);
+        for(var b=this.rectangles.length-1;b>=0;b--) {
+          let rectangle = this.rectangles[b];
+
+          if(this.onRectangle(coords.x, coords.y, rectangle)) {
+            console.log("Yes, coords is on rectangle: ", rectangle);
+            this.unselectRectangles();
+            rectangle.selected = true;
+            this.drawRectangles();
+            break;
+          }
+        }
+        this.drawRectangles();
+      },
+
+      draw: function() {
+        this.clear();
+      },
+
+      drawRectangles: function() {
+        // TODO: Refactor with
+        //  for(const r of this.rectangles) { r.draw() }
+        //
+        for(var b=0; b < this.rectangles.length; b++) {
+          this.rectangles[b].draw();
+        }
+      },
+
+      clear: function() {
+        ctx.drawImage(image, 0, 9);
+      },
+
+      init: function(c) {
+        this.canvas = c;
+      },
+
+      unselectRectangles: function() {
+        // TODO: Refactor with
+        //  for(const r of this.rectangles) { r.draw() }
+        //
+        for(var b=0; b<this.rectangles.length; b++) {
+          this.rectangles[b].selected = false;
+        }
+      },
+
+      getSelectedRect: function() {
+        // TODO: Refactor with
+        //  for(const r of this.rectangles) { r.draw() }
+        //
+        for(var b=this.rectangles.length-1;b>=0;b--) {
+          if(this.rectangles[b].selected)
+            return this.rectangles[b];
+        }
+        return null;
+      },
+
+      isOnRectangle: function(x, y) {
+        if(this.getRectangle(x,y,false) !== null) {
+          return true;
+        }
+        return false;
+      },
+
+      onRectangle: function(x, y, rect, selected) {
+        if(this.getRectangle(x, y, selected) == rect) {
+          return true;
+        }
+        return false;
+      },
+
+      getRectangle: function(x, y, selected) {
+        for (var b=this.rectangles.length-1;b>=0;b--) {
+          let rect = this.rectangles[b];
+          let off = rect.size/2;
+          if ( (rect.x<x+off && x+off<rect.x+rect.size) && (rect.y<y+off && y+off<rect.y+rect.size) ) {
+            console.log("Found rectangle: ", rect);
+            if (!selected) {
+              return rect;
+            } else if (rect.selected) {
+              return rect;
+            }
+          }
+        }
+        return null;
+      },
+
+      removeRectangle: function(obj) {
+        let idx = this.rectangles.indexOf(obj);
+        if (idx > -1) {
+          this.rectangles.splice(idx, 1);
+        }
+      }
+    };
+
+    // ADD
+    addBtn.addEventListener('click', function(e) {
+      const rect = kattvhask.addRectangle();
+      console.log("Added rect to canvas.", rect);
+      kattvhask.clear();
+      kattvhask.drawRectangles();
+    });
+
+    // REMOVE
+    removeBtn.addEventListener('click', function(e) {
+      let rect = kattvhask.getSelectedRect();
+      kattvhask.removeRectangle(rect);
+      kattvhask.clear();
+      kattvhask.drawRectangles();
+    });
+
+    // SAVE
+    saveBtn.addEventListener('click', function(e) {
+      alert("Saved: "+JSON.stringify(rectangles));
+
+      // TODO: Send information to the kattvhask server over
+      // the websocket
+    });
+
+    // PLUSS
+    plussBtn.addEventListener('click', function(e) {
+      console.log("plussBtn click");
+
+      let rect = kattvhask.getSelectedRect();
+      if(typeof rect !== 'undefined')
+      {
+        if(rect.size < 200)
+          rect.size += 10;
+        kattvhask.clear();
+        kattvhask.drawRectangles();
+      }
+    });
+
+    // MINUS
+    minusBtn.addEventListener('click', function(e) {
+      let rect = kattvhask.getSelectedRect();
+      if(typeof rect !== 'undefined')
+      {
+        if(rect.size > 20)
+          rect.size -= 10;
+        kattvhask.clear();
+        kattvhask.drawRectangles();
+      }
+    });
+
+    // BOX
+    canvas.addEventListener('click', function(e) {
+      kattvhask.onClick(e);
+    });
+
+
+    canvas.addEventListener('mousemove', function(e) {
+      if(kattvhask.dragging)
+      {
+        let rect = kattvhask.getSelectedRect();
+        if(rect !== null) {
+          rect.x = mouse(canvas,e).x;
+          rect.y = mouse(canvas,e).y;
+        }
+        kattvhask.clear();
+        kattvhask.drawRectangles();
+      }
+
+    });
+
+    canvas.addEventListener('mousedown', function(e) {
+      let coords = mouse(canvas, e);
+      let rect = kattvhask.getRectangle(coords.x, coords.y, true);
+      if(rect !== null) {
+        kattvhask.dragging = true;
+      }
+    });
+
+    canvas.addEventListener('mouseup', function(e) {
+      kattvhask.dragging = false;
+    });
+
+    pluss.draw();
+    minus.draw();
+    save.draw();
+    add.draw();
+    remove.draw();
+
+    kattvhask.init(canvas);
+
+    function mouse(canvas, evt) {
+        var rect = canvas.getBoundingClientRect();
+        return {
+            x: (evt.clientX - rect.left) / (rect.right - rect.left) * canvas.width,
+            y: (evt.clientY - rect.top) / (rect.bottom - rect.top) * canvas.height
+        };
+    }
+
+    // Set up touch events for mobile, etc
+    canvas.addEventListener("touchstart", function (e) {
+      mousePos = mouse(canvas, e);
+      var touch = e.touches[0];
+      var mouseEvent = new MouseEvent("mousedown", {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      });
+      var mouseEvent2 = new MouseEvent("click", {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      });
+      canvas.dispatchEvent(mouseEvent2);
+      canvas.dispatchEvent(mouseEvent);
+    }, {passive:false});
+
+    canvas.addEventListener("touchend", function (e) {
+      var touch = e.touches[0];
+      var mouseEvent = new MouseEvent("mouseup", {});
+      canvas.dispatchEvent(mouseEvent);
+    }, {passive:false});
+
+    canvas.addEventListener("touchmove", function (e) {
+
+      var touch = e.touches[0];
+      var mouseEvent = new MouseEvent("mousemove", {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      });
+      canvas.dispatchEvent(mouseEvent);
+      let coords = mouse(canvas, mouseEvent);
+      if (e.target == canvas && kattvhask.isOnRectangle(coords.x, coords.y)) {
+        e.preventDefault();
+      }
+
+    }, {passive:false});
+
+    // Get the position of a touch relative to the canvas
+    function getTouchPos(canvasDom, touchEvent) {
+      var rect = canvasDom.getBoundingClientRect();
+      return {
+        x: touchEvent.touches[0].clientX - rect.left,
+        y: touchEvent.touches[0].clientY - rect.top
+      };
+    }
+</script>
+
+  <script>
+    // tell the embed parent frame the height of the content
+    if (window.parent && window.parent.parent) {
+      window.parent.parent.postMessage(["resultsFrame", {
+        height: document.body.getBoundingClientRect().height,
+        slug: ""
+      }], "*");
+    }
+  </script>
+</body>
+</html>
