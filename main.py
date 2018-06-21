@@ -15,6 +15,7 @@ import json
 import pendulum
 from typing import Dict
 import click
+import base64
 
 import numpy as np
 import cv2
@@ -64,6 +65,8 @@ class Kattvhask:
         if not self.headless:
             LOG.info("Running in UI mode")
             self.create_gui()
+        else:
+            LOG.info("Running in headless mode")
 
         self.init_video_stream()
 
@@ -385,6 +388,7 @@ class Kattvhask:
                 "when": ts,
                 "body": "Motion detected"
             }
+            print(f"motion detection alert")
             await web_server.queue.put(event)
 
 
@@ -409,8 +413,13 @@ class Kattvhask:
             self.mqtt(event)
 
     def run(self):
+        async def send_frame_to_webserver(frame):
+            await web_server.frames.put(bytes(frame))
+
         try:
+            last_frame_ts = pendulum.now()
             while True:
+                now = pendulum.now()
                 grabbed, frame = self.capture.read()
                 if not grabbed:
                     if not self.capture.isOpened():
@@ -429,6 +438,15 @@ class Kattvhask:
                 self.frame_queue.append(gray_and_blurred)
 
                 self.do_detect(frame)
+
+                # Output a video frame every second
+                elapsed = now - last_frame_ts
+                if elapsed.seconds > 1:
+                    _, jpg_frame = cv2.imencode('.png', frame)
+                    b64 = base64.b64encode(jpg_frame)
+
+                    asyncio.run_coroutine_threadsafe(send_frame_to_webserver(b64), loop=self.loop)
+                    last_frame_ts = pendulum.now()
 
                 if not self.headless:
                     img = Image.fromarray(frame)
@@ -465,7 +483,7 @@ class Kattvhask:
              type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True),
              help='Configuration file')
 @click.option('--headless',
-             default=True,
+             default=False,
              is_flag=True,
              type=bool,
              help="If true then run in headless mode (without any GUI)")
