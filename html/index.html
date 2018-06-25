@@ -9,8 +9,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <link rel="stylesheet" type="text/css" href="/css/result-light.css">
+  <script src="reconnecting-websocket.min.js"></script>
 
   <style type="text/css">
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+    .circle
+    {
+    width:50px;;
+    height:50px;
+    border-radius:50%;
+    font-size:12px;
+    color:#000;
+    line-height:25px;
+    text-align:center;
+    background:#f00;
+
+    /* background-image: -moz-radial-gradient(45px 45px 45deg, circle cover, yellow 0%)*/
+
+    }
   </style>
 
 </head>
@@ -26,6 +46,15 @@
   <canvas id="saveBtn" style="border: 1px solid" width="100" height="60"></canvas>
   <canvas id="addBtn" style="border: 1px solid" width="100" height="60"></canvas>
   <canvas id="removeBtn" style="border: 1px solid" width="100" height="60"></canvas>
+</div>
+
+<div>
+  <div id="status" class="circle"></div>
+</div>
+
+<div id="frame" style="padding: 1em;">
+  frame canvas..<br/>
+  <canvas id="frameCanvas" style="border: 1px solid;"/>
 </div>
 
   <script type="text/javascript">
@@ -124,12 +153,12 @@
 
     // main canvas background image
     // TODO: Replace with a continous flow of frames from WebSocket
-    var image = new Image();
+    /*var image = new Image();
     image.src = "https://www.wabe.org/wp-content/uploads/2017/04/AP_17090575280187-e1491229126347-600x300.jpg"
     image.addEventListener('load', function() {
       kattvhask.clear();
       kattvhask.drawRectangles();
-    }, false);
+    }, false);*/
 
     // Main kattvhask object. Encapsulates all interactions and objects on the canvas
     var kattvhask = {
@@ -412,6 +441,78 @@
         slug: ""
       }], "*");
     }
+  </script>
+
+  <script type="text/javascript">
+  </script>
+
+
+  <script type="text/javascript">
+  function KattvhaskService(canvas) {
+    this.ws_frames = new ReconnectingWebSocket("ws://localhost:6789/frames");
+    this.ws_frames.onmessage = this.new_frame.bind(this);
+    this.ws_frames.onopen = this.frames_open.bind(this);
+
+    this.ws = new ReconnectingWebSocket("ws://localhost:6789");
+    this.ws.onopen = this.onopen.bind(this);
+    this.ws.onmessage = this.onmessage.bind(this);
+    this.ws.onclose = this.onclose.bind(this);
+    this.ws.onerror = this.onerror.bind(this);
+
+    this.frame = null;
+    this.canvas = canvas;
+
+    this.status = false;
+  }
+
+  KattvhaskService.prototype.setOk = function() {
+    // green
+    let status = document.getElementById("status");
+    status.style.backgroundColor = "#0f0";
+  }
+
+  KattvhaskService.prototype.setNotOk = function() {
+    // red
+    let status = document.getElementById("status");
+    status.style.backgroundColor = "#f00";
+  }
+
+  KattvhaskService.prototype.frames_open = function() {
+    console.log("Websocket to frames service is now open");
+  }
+
+  KattvhaskService.prototype.new_frame = function(e) {
+    var frameImg = new Image();
+    let data = e.data;
+    var _this = this;
+    frameImg.onload = function() {
+      _this.canvas.drawImage(frameImg, 0, 0);
+    }
+
+    frameImg.src = "data:image/png;base64," + data;
+  }
+
+  KattvhaskService.prototype.onopen = function(e) {
+    console.log("websocket connection is now open");
+    this.setOk();
+  }
+
+  KattvhaskService.prototype.onmessage = function(e) {
+    console.log("Received msg: ", e.data);
+  }
+
+  KattvhaskService.prototype.onclose = function(e) {
+    console.log("Websocket closed");
+    this.setNotOk();
+  }
+
+  KattvhaskService.prototype.onerror = function(e) {
+    console.log("WebSocket error.");
+    this.setNotOk();
+  }
+  var frameCanvas = document.getElementById("frameCanvas");
+  var frameCtx = frameCanvas.getContext('2d');
+  var service = new KattvhaskService(ctx);
   </script>
 </body>
 </html>
