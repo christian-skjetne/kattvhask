@@ -385,7 +385,7 @@ class Kattvhask:
             """
             ts = pendulum.now()
             event = {
-                "when": ts,
+                "when": str(ts),
                 "body": "Motion detected"
             }
             print(f"motion detection alert")
@@ -441,7 +441,7 @@ class Kattvhask:
 
                 # Output a video frame every second
                 elapsed = now - last_frame_ts
-                if elapsed.seconds > 1:
+                if elapsed.seconds >= 1:
                     _, jpg_frame = cv2.imencode('.png', frame)
                     b64 = base64.b64encode(jpg_frame)
 
