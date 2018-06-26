@@ -175,6 +175,7 @@
       dragging: false,
       lastid: 0,
       canvas: null,
+      background: new Image(),
 
       addRectangle: function() {
         const rect = {
@@ -215,8 +216,19 @@
         this.drawRectangles();
       },
 
+      updateBackground: function(data) {
+        this.background.onload = function() {
+          ctx.drawImage(this.background, 0, 0);
+          kattvhask.drawRectangles();
+        }.bind(this);
+
+        this.background.src = "data:image/png;base64," + data;
+      },
+
       draw: function() {
-        this.clear();
+        // this.clear();
+        console.log("draw()");
+        ctx.drawImage(this.background, 0, 0);
       },
 
       drawRectangles: function() {
@@ -229,7 +241,9 @@
       },
 
       clear: function() {
-        ctx.drawImage(image, 0, 9);
+        //ctx.drawImage(image, 0, 9);
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.draw();
       },
 
       init: function(c) {
@@ -296,33 +310,32 @@
     // ADD
     addBtn.addEventListener('click', function(e) {
       const rect = kattvhask.addRectangle();
-      console.log("Added rect to canvas.", rect);
-      kattvhask.clear();
       kattvhask.drawRectangles();
     });
 
     // REMOVE
     removeBtn.addEventListener('click', function(e) {
       let rect = kattvhask.getSelectedRect();
-      kattvhask.removeRectangle(rect);
-      kattvhask.clear();
-      kattvhask.drawRectangles();
+      if (rect !== null) {
+        kattvhask.removeRectangle(rect);
+        kattvhask.draw();
+        kattvhask.drawRectangles();
+      }
     });
 
     // SAVE
     saveBtn.addEventListener('click', function(e) {
-      alert("Saved: "+JSON.stringify(rectangles));
+      alert("Saved: "+JSON.stringify(kattvhask.rectangles));
 
       // TODO: Send information to the kattvhask server over
       // the websocket
+      service.saveConfig(kattvhask.rectangles);
     });
 
     // PLUSS
     plussBtn.addEventListener('click', function(e) {
-      console.log("plussBtn click");
-
       let rect = kattvhask.getSelectedRect();
-      if(typeof rect !== 'undefined')
+      if(rect !== null)
       {
         if(rect.size < 200)
           rect.size += 10;
@@ -334,7 +347,7 @@
     // MINUS
     minusBtn.addEventListener('click', function(e) {
       let rect = kattvhask.getSelectedRect();
-      if(typeof rect !== 'undefined')
+      if(rect !== null)
       {
         if(rect.size > 20)
           rect.size -= 10;
@@ -467,14 +480,16 @@
 
   KattvhaskService.prototype.setOk = function() {
     // green
-    let status = document.getElementById("status");
-    status.style.backgroundColor = "#0f0";
+    let statusCircle = document.getElementById("status");
+    statusCircle.style.backgroundColor = "#0f0";
+    this.status = true;
   }
 
   KattvhaskService.prototype.setNotOk = function() {
     // red
-    let status = document.getElementById("status");
-    status.style.backgroundColor = "#f00";
+    let statusCircle = document.getElementById("status");
+    statusCircle.style.backgroundColor = "#f00";
+    this.status = false;
   }
 
   KattvhaskService.prototype.frames_open = function() {
@@ -482,14 +497,8 @@
   }
 
   KattvhaskService.prototype.new_frame = function(e) {
-    var frameImg = new Image();
     let data = e.data;
-    var _this = this;
-    frameImg.onload = function() {
-      _this.canvas.drawImage(frameImg, 0, 0);
-    }
-
-    frameImg.src = "data:image/png;base64," + data;
+    kattvhask.updateBackground(data);
   }
 
   KattvhaskService.prototype.onopen = function(e) {
@@ -498,7 +507,14 @@
   }
 
   KattvhaskService.prototype.onmessage = function(e) {
-    console.log("Received msg: ", e.data);
+    // console.log("Received msg: ", e.data);
+    let newEvent = document.createElement("p");
+    newEvent.style.cssText = "color: grey;";
+    newEvent.innerText = e.data;
+    let parentNode = document.getElementById("events");
+    parentNode.appendChild(newEvent);
+
+    events.scrollTop = events.scrollHeight;
   }
 
   KattvhaskService.prototype.onclose = function(e) {
@@ -510,8 +526,17 @@
     console.log("WebSocket error.");
     this.setNotOk();
   }
-  var frameCanvas = document.getElementById("frameCanvas");
-  var frameCtx = frameCanvas.getContext('2d');
+
+  KattvhaskService.prototype.saveConfig = function(rectangles) {
+    if (!this.status) {
+      console.log("No good websocket connection at the moment");
+      return;
+    }
+    let data = JSON.stringify(rectangles);
+    this.ws.send(data);
+  }
+  //var frameCanvas = document.getElementById("frameCanvas");
+  //var frameCtx = frameCanvas.getContext('2d');
   var service = new KattvhaskService(ctx);
   </script>
 </body>
