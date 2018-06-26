@@ -1,9 +1,8 @@
 import websockets
 import asyncio
+import json
 
 # Store 50 events in queue
-
-# QUEUE needs to be started inside the 'new_loop'
 queue = None
 frames = None
 
@@ -17,44 +16,71 @@ async def events(websocket):
 async def get_frames():
     await frames.get()
 
-async def kattvhask_ws(websocket, path):
-    print(f"New connection.. path -> {path}")
+async def consume(message):
+    """Validate input regions created from the web interface"""
+    print(message)
+    return True
 
-    if websocket in connected:
-        print(f"Already registered client")
+async def read_user_input(websocket):
+    async for message in websocket:
+        await consume(message)
 
+async def stream_frames(websocket, path):
     if path.startswith("/frames"):
         while True:
             frame = await frames.get()
-            if frame is None:
-                print("WTF? Frame is None...")
-                return
-            await websocket.send(frame.decode("utf-8"))
-    else:
-        connected.add(websocket)
+            if frame is not None:
+                if websocket.open:
+                    await websocket.send(frame.decode("utf-8"))
 
-        # cmd = await websocket.recv()
-        # if not cmd.startswith("CONN"):
-        #     await websockets.send("Bad command")
-        #     return
-        """
-        dir(websocket): ['AbortHandshake', 'ConnectionClosed', 'DuplicateParameter', 'InvalidHandshake', 'InvalidHeader', 'InvalidHeaderFormat', 'InvalidHeaderValue', 'InvalidMessage', 'InvalidOrigin', 'InvalidParameterName', 'InvalidParameterValue', 'InvalidState', 'InvalidStatusCode', 'InvalidURI', 'InvalidUpgrade', 'NegotiationError', 'PayloadTooBig', 'WebSocketClientProtocol', 'WebSocketCommonProtocol', 'WebSocketProtocolError', 'WebSocketServerProtocol', 'WebSocketURI', '__all__', '__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', '__version__', 'client', 'compatibility', 'connect', 'exceptions', 'extensions', 'framing', 'handshake', 'headers', 'http', 'parse_uri', 'protocol', 'py36', 'serve', 'server', 'speedups', 'unix_serve', 'uri', 'version']
-        websocket: <websockets.server.WebSocketServerProtocol object at 0x7f2eef5eaf98>
-        """
-        try:
-            while True:
-                event = await queue.get()
-                print(f"event: {event}")
-                await websocket.send(str(event))
-        finally:
-            # Unregister
-            connected.remove(websocket)
-
-    # if path not in routes:
+async def stream_events(websocket, path):
+    connected.add(websocket)
+    # cmd = await websocket.recv()
+    # if not cmd.startswith("CONN"):
+    #     await websockets.send("Bad command")
     #     return
+    try:
+        # start with pushin the current camera setup
+        current_setup = dict(regions=[(1,1), (255,255)])
+        await websocket.send(json.dumps(current_setup))
 
-    # return await routes[path](websocket)
+        while True:
+            event = await queue.get()
+            print(f"event: {event}")
+            await websocket.send(str(event))
+    finally:
+        # Unregister
+        connected.remove(websocket)
 
+async def kattvhask_ws(websocket, path):
+    if websocket in connected:
+        print(f"Already registered client")
+
+    # frame_streamer_task = asyncio.ensure_future(
+    #     stream_frames(websocket, path))
+    if path.startswith('/frames'):
+        print("Client connected for streaming frames..")
+        stream_frame_task = asyncio.ensure_future(stream_frames(websocket, path))
+        await stream_frame_task
+        return
+
+    print("Client connected for streaming events")
+
+    input_reader_task = asyncio.ensure_future(
+        read_user_input(websocket)
+    )
+    event_streamer = asyncio.ensure_future(
+        stream_events(websocket, path)
+    )
+
+    done, pending = await asyncio.wait(
+        [input_reader_task, event_streamer],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    print("done and pending")
+    print(done)
+    for task in pending:
+        task.cancel()
 
 def get_server():
     print("Starting server")
