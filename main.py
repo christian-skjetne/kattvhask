@@ -394,7 +394,8 @@ class Kattvhask:
 
         if self.last_notification is not None:
             period = pendulum.now() - self.last_notification
-            if period.seconds < 5:
+            # if period.seconds < 5:
+            if period.seconds < 1:
                 return
             else:
                 self.last_notification = pendulum.now()
