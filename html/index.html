@@ -31,6 +31,12 @@
     /* background-image: -moz-radial-gradient(45px 45px 45deg, circle cover, yellow 0%)*/
 
     }
+
+    #events {
+      overflow-x: hidden;
+      overflow-y: visible;
+      height: 200px;
+    }
   </style>
 
 </head>
@@ -52,9 +58,11 @@
   <div id="status" class="circle"></div>
 </div>
 
-<div id="frame" style="padding: 1em;">
-  frame canvas..<br/>
-  <canvas id="frameCanvas" style="border: 1px solid;"/>
+<br/>
+<div id="frame">
+  <p>Events:</p>
+  <div id="events" style="padding: 1em; min-width: 300px; border: 1px solid;">
+  </div>
 </div>
 
   <script type="text/javascript">
@@ -194,12 +202,10 @@
       onClick: function(e) {
         let coords = mouse(this.canvas, e);
         let nr = this.rectangles.length;
-        console.log("loop over "+nr+" rects. Coords: ", coords);
         for(var b=this.rectangles.length-1;b>=0;b--) {
           let rectangle = this.rectangles[b];
 
           if(this.onRectangle(coords.x, coords.y, rectangle)) {
-            console.log("Yes, coords is on rectangle: ", rectangle);
             this.unselectRectangles();
             rectangle.selected = true;
             this.drawRectangles();
@@ -269,7 +275,6 @@
           let rect = this.rectangles[b];
           let off = rect.size/2;
           if ( (rect.x<x+off && x+off<rect.x+rect.size) && (rect.y<y+off && y+off<rect.y+rect.size) ) {
-            console.log("Found rectangle: ", rect);
             if (!selected) {
               return rect;
             } else if (rect.selected) {
@@ -342,7 +347,6 @@
     canvas.addEventListener('click', function(e) {
       kattvhask.onClick(e);
     });
-
 
     canvas.addEventListener('mousemove', function(e) {
       if(kattvhask.dragging)
@@ -442,10 +446,6 @@
       }], "*");
     }
   </script>
-
-  <script type="text/javascript">
-  </script>
-
 
   <script type="text/javascript">
   function KattvhaskService(canvas) {
