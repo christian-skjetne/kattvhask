@@ -67,6 +67,7 @@ class Kattvhask:
             self.create_gui()
         else:
             LOG.info("Running in headless mode")
+            self.parse_config()
 
         self.init_video_stream()
 
