@@ -421,7 +421,7 @@ class Kattvhask:
         import imutils.video
         if utils.is_raspberry_pi():
             LOG.info("Running Raspberry Pi")
-            self.capture = imutils.video.VideoStream(usePiCamera=true)
+            self.capture = imutils.video.VideoStream(usePiCamera=True)
         else:
             LOG.info("Running regular x86")
             # self.capture = cv2.VideoCapture(0)
