@@ -8,7 +8,8 @@ from tkinter import *
 import time
 import itertools
 from collections import deque
-from threading import Thread
+import queue
+from threading import Thread, Event
 import functools
 import random
 import json
@@ -16,6 +17,7 @@ import pendulum
 from typing import Dict
 import click
 import base64
+import uuid
 
 import numpy as np
 import cv2
@@ -41,6 +43,7 @@ class Kattvhask:
         self.rect = None
         self.image = None
         self.rectangles = []
+        self.object_mapping = {}
         self.active_rect = None
         self.moving = False
         self.prev_curX = None
@@ -53,12 +56,20 @@ class Kattvhask:
         self.motion_detected = False
         self.good_contours_count = 0
         self.loop = loop
+        self.input_changes = queue.Queue()
 
         self.config = config
         self.headless = headless
         self.kcw = KeyClipWriter("output")
         self.last_notification = None
         self.last_contour_identified = None
+
+        # if "setup_queue" in kw:
+        setup_queue = kw.get("setup_queue", None)
+        if setup_queue:
+            self.setup_queue = setup_queue.sync_q
+        else:
+            self.setup_queue = None
 
         self.mqtt = kw.get("mqtt", None)
 
@@ -67,37 +78,131 @@ class Kattvhask:
             self.create_gui()
         else:
             LOG.info("Running in headless mode")
-            self.parse_config()
+            if self.config:
+                self.parse_config()
 
         self.init_video_stream()
+
+        # Setup callback for global Observer object
+        # web_server.kattvhask_setup.bind_to(self.on_setup_update)
 
     def parse_config(self):
         if not self.config:
             return
 
+        ws_payload = []
         for rect in self.config.get("rectangles", []):
+            rect_id = rect.get("id")
             x0 = rect.get("x0")
             y0 = rect.get("y0")
             x1 = rect.get("x1")
             y1 = rect.get("y1")
+            new_rect = {
+                "bbox": (x0, y0, x1, y1),
+                "id": rect_id
+            }
+            ws_payload.append(new_rect)
 
             if not self.headless:
                 # Create tk rectangles
-                new_rect = self.canvas.create_rectangle(x0, y0, x1, y1, outline='green', width=self.rect_border_width, tags="rectangle")
-                self.canvas.itemconfig(new_rect, outline='red')
-                self.rectangles.append(new_rect)
+                canvas_rect = self.canvas.create_rectangle(x0, y0, x1, y1, outline='green', width=self.rect_border_width, tags="rectangle")
+                self.canvas.itemconfig(canvas_rect, outline='red')
+                self.rectangles.append(canvas_rect)
+                self.object_mapping[canvas_rect] = rect_id
             else:
                 # Create 'dummy' rectangles
-                self.rectangles.append({
-                    "bbox": (x0, y0, x1, y1)
-                })
+                self.rectangles.append(new_rect)
+
+        print("kattvhask ws_payload: {}".format(ws_payload))
+        # UGLY trick: we wan't to avoid an 'update' event on the
+        #           web_server.kattvhask_setup object. Therefore
+        #           removing our listener before updating the value.
+        #           Then add our 'self.on_setup_update' callback again.
+        # web_server.kattvhask_setup.remove_bind(self.on_setup_update)
+        # web_server.kattvhask_setup.rectangles = ws_payload
+        # web_server.kattvhask_setup.bind_to(self.on_setup_update)
+        self.setup_queue.put(ws_payload)
+
+    def add_rectangle(self, uuid, bbox):
+        print(f"Add new rectangle...{uuid} {bbox}")
+
+    def update_rectangle(self, uuid, bbox):
+        print(f"update_rectangle: {uuid} and {bbox}")
+        if not self.headless:
+            try:
+                item_id = [k for k,v in self.object_mapping.items() if v == uuid][0]
+            except IndexError:
+                print(f"Unable to find canvas with uuid={uuid}")
+                return
+            # Update existing rectangle on the canvas
+            self.canvas.coords(item_id, *bbox)
+            print("  GUI mode rect update")
+        else:
+            for rect in self.rectangles:
+                if rect.get("id") == uuid:
+                    # Set new bbox
+                    rect["bbox"] = bbox
+                    print("  headless update rect")
+
+    def on_setup_update(self, in_rects):
+        """Receive updated setup information from the user (websocket) about
+        reactangles, positions and sizes.
+
+        Must compare with the ones we already have and update accordingly.
+        """
+
+        try:
+            incoming_object = self.setup_queue.get_nowait()
+            print("Incoming setup object update: {}".format(incoming_object))
+            self.input_changes(incoming_object)
+        except janus.Empty:
+            print("on_setup_update: No setup object update yet..")
+            return None
+
+        # print("on_setup_update: New update, rectangles is now: {}".format(in_rects))
+        # self.input_changes.put(in_rects)
+
+    def on_input_change(self, in_rects):
+        print("on_input_change")
+        if not self.headless:
+            my_rectangle_uuids = list(self.object_mapping.values())
+        else:
+            my_rectangle_uuids = list(x.get('id') for x in self.rectangles)
+
+        for in_rect in in_rects:
+            if "bbox" in in_rect:
+                bbox = in_rect.get("bbox")
+            else:
+                bbox = (in_rect['x0'], in_rect['y0'], in_rect['x1'], in_rect['y1'])
+                bbox = tuple(map(lambda x: int(x), bbox))
+
+            if in_rect.get("uuid") in my_rectangle_uuids:
+                # existing rectangle - update the existing one
+                self.update_rectangle(in_rect.get("uuid"), bbox)
+            else:
+                # new rectangle - add to self.rectangles
+                new_rect = {
+                    "bbox": bbox,
+                    "id": in_rect.get("uuid")
+                }
+                self.rectangles.append(new_rect)
+
+        # for r in self.rectangles:
+        #     if not self.headless:
+        #         # In GUI mode
+        #         rect_id = self.object_mapping[r]
+
+        #         for obj in in_rects:
+        #             if rect_id == obj.get("uuid"):
+        #                 # existing rectangle
+
 
     def create_gui(self):
         """Create the Tk GUI elements if we are not running in 'headless' mode.
         Typically used to verify the position of the camera and the regions of interest.
         """
         self.root = Tk()
-        self.canvas = Canvas(self.root, width=500, height=300, bd=10, bg='white')
+        self.canvas = Canvas(self.root, width=640, height=480, bd=10, bg='white')
         self.canvas.focus_set()
         self.canvas.pack(expand=YES, fill=BOTH)
         self.canvas.bind("<ButtonPress-3>", self.on_right_button_press)
@@ -119,25 +224,46 @@ class Kattvhask:
 
     def save(self):
         """Save all rectangles to a config file (json)."""
+
+        ws_payload = []
         with open('config.json', 'w') as cfg_file:
             data = {'rectangles': []}
             for rect in self.rectangles:
-                bbox = self.canvas.bbox(rect)
+                rect_id = self.object_mapping[rect]
+                bbox = self.get_bbox(rect)
                 x0, y0, x1, y1 = bbox
                 data["rectangles"].append({
+                    "id": str(rect_id),
                     "x0": x0,
                     "y0": y0,
                     "x1": x1,
                     "y1": y1
                 })
+
+                ws_payload.append({
+                    "bbox": (x0, y0, x1, y1),
+                    "id": rect_id
+                })
+
             # Write dictionary to cfg_file (json serialized)
             json.dump(data, cfg_file)
+
+        print("kattvhask ws_payload: {}".format(ws_payload))
+        # UGLY trick: we wan't to avoid an 'update' event on the
+        #           web_server.kattvhask_setup object. Therefore
+        #           removing our listener before updating the value.
+        #           Then add our 'self.on_setup_update' callback again.
+        # web_server.kattvhask_setup.remove_bind(self.on_setup_update)
+        # web_server.kattvhask_setup.rectangles = ws_payload
+        # web_server.kattvhask_setup.bind_to(self.on_setup_update)
+        self.setup_queue.put(ws_payload)
 
     def clear(self):
         self.active_rect = None
         for item in self.rectangles:
             self.canvas.delete(item)
         self.rectangles = []
+        self.object_mapping.clear()
 
     def get_bbox(self, item):
         if not self.headless:
@@ -206,6 +332,8 @@ class Kattvhask:
             # No rectangle under cursor
             rect = self.canvas.create_rectangle(curX, curY, curX, curY, outline='green', width=self.rect_border_width, tags="rectangle")
             self.rectangles.append(rect)
+            rect_id = uuid.uuid4()
+            self.object_mapping[rect] = rect_id
             self.active_rect = rect
         else:
             if self.active_rect:
@@ -414,6 +542,9 @@ class Kattvhask:
             }
             self.mqtt(event)
 
+    async def ws_send_rectangles(self):
+        await web_server.queue.put("LOL")
+
     def run(self):
         async def send_frame_to_webserver(frame):
             await web_server.frames.put(bytes(frame))
@@ -465,8 +596,16 @@ class Kattvhask:
                         self.canvas.itemconfig(self.image, image=photo)
                     self.root.update()
 
+                try:
+                    input_change_from_websocket = self.input_changes.get_nowait()
+                    if input_change_from_websocket is not None:
+                        self.on_input_change(input_change_from_websocket)
+                except queue.Empty:
+                    pass
+
             if not self.headless:
                 self.root.mainloop()
+
         except KeyboardInterrupt as err:
             LOG.info("User ctrl+c'ed us.. Time to quit!")
             self.quit()
@@ -520,19 +659,28 @@ def main(loglevel, config, headless, mqtt_host, mqtt_username, mqtt_pw):
         asyncio.gather(loop=loop, *all_tasks, return_exceptions=True).cancel()
 
     LOG.info("Creating and starting backgrund thread..")
-    t = Thread(target=web_server.start_server, args=(new_loop,))
+    webserver_ready = Event()
+    t = Thread(target=web_server.start_server, args=(new_loop, webserver_ready))
     t.start()
+
+    LOG.info("Waiting for webserver..")
+    webserver_ready.wait()
+    LOG.info("Ready!")
 
     try:
         cfg = None
-        with open(config, 'r') as f:
-            cfg = json.load(f)
+        if config:
+            with open(config, 'r') as f:
+                try:
+                    cfg = json.load(f)
+                except json.decoder.JSONDecodeErrors:
+                    LOG.warn("Unable to parse config file.")
 
         mqtt_handler = None
         if mqtt_host:
             mqtt_handler = handlers.Mqtt("kattvhask", mqtt_host, mqtt_username, mqtt_pw)
 
-        app = Kattvhask(new_loop, config=cfg, headless=headless, mqtt=mqtt_handler)
+        app = Kattvhask(new_loop, config=cfg, headless=headless, mqtt=mqtt_handler, setup_queue=web_server.setup_queue)
         app.run()
 
     except KeyboardInterrupt:
