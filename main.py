@@ -620,8 +620,8 @@ class Kattvhask:
              ),
              help="The level of logging output to include")
 @click.option("--config",
-             default='config.json',
-             type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True),
+             default=None,
+             type=click.Path(exists=False, file_okay=True, dir_okay=False, resolve_path=True),
              help='Configuration file')
 @click.option('--headless',
              default=False,
