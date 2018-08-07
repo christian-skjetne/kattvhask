@@ -28,6 +28,7 @@ import web_server
 from keyclipwriter import KeyClipWriter
 import handlers
 import logconfig
+import utils
 
 
 LOG = logging.getLogger("kattvhask")
@@ -413,10 +414,22 @@ class Kattvhask:
     def quit(self):
         if not self.headless:
             self.root.destroy()
-        self.capture.release()
+
+        self.capture.stop()
 
     def init_video_stream(self):
-        self.capture = cv2.VideoCapture(0)
+        import imutils.video
+        if utils.is_raspberry_pi():
+            LOG.info("Running Raspberry Pi")
+            self.capture = imutils.video.VideoStream(usePiCamera=true)
+        else:
+            LOG.info("Running regular x86")
+            # self.capture = cv2.VideoCapture(0)
+            self.capture = imutils.video.VideoStream()
+
+        # start video capture thread
+        self.capture.start()
+
         # Warmup time
         time.sleep(1)
 
@@ -553,12 +566,15 @@ class Kattvhask:
             last_frame_ts = pendulum.now()
             while True:
                 now = pendulum.now()
-                grabbed, frame = self.capture.read()
-                if not grabbed:
-                    if not self.capture.isOpened():
-                        break
-                    else:
-                        continue
+                frame = self.capture.read()
+                if self.capture.stream.stopped:
+                    LOG.info("Videostream stopped.")
+                    break
+                # if not frame:
+                #     if not self.capture.isOpened():
+                #         break
+                #     else:
+                #         continue
 
                 gray_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
                 gray_and_blurred = cv2.GaussianBlur(gray_frame, (21, 21), 0)
@@ -684,6 +700,9 @@ def main(loglevel, config, headless, mqtt_host, mqtt_username, mqtt_pw):
         app.run()
 
     except KeyboardInterrupt:
+        pass
+
+    finally:
         LOG.info("GUI quited..")
         new_loop.call_soon_threadsafe(shutdown_task)
         new_loop.stop()
