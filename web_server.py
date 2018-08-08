@@ -126,6 +126,22 @@ async def stream_events(websocket, path):
         # Unregister
         connected.remove(websocket)
 
+async def stream_setup(websocket, path):
+    # connected.add(websocket)
+    try:
+        # start with pushin the current camera setup
+        # await websocket.send(kattvhask_setup.json())
+        async_queue = setup_queue.async_q
+
+        while True:
+            event = await async_queue.get()
+            print(f"setup event: {event}")
+            await broadcast_events(json.dumps(event))
+    finally:
+        # Unregister
+        #connected.remove(websocket)
+        pass
+
 async def kattvhask_ws(websocket, path):
     if websocket in connected:
         print(f"Already registered client")
@@ -144,9 +160,12 @@ async def kattvhask_ws(websocket, path):
     event_streamer = asyncio.ensure_future(
         stream_events(websocket, path)
     )
+    setup_streamer = asyncio.ensure_future(
+        stream_setup(websocket, path)
+    )
 
     done, pending = await asyncio.wait(
-        [input_reader_task, event_streamer],
+        [input_reader_task, event_streamer, setup_streamer],
         return_when=asyncio.FIRST_COMPLETED,
     )
     print("done and pending")
