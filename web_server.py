@@ -1,63 +1,178 @@
 import websockets
 import asyncio
+import json
+import typing
+import threading
+import janus
+
+class GlobalSetup:
+    """Global setup object to be shared between kattvhask and the websocket server. The intent is
+    to support updates from either side and properly communicate them across asyncio/threads.
+
+    Follows a basic Observer pattern.
+    """
+    def __init__(self):
+        self._rectangles = []
+        self._observers: typing.List[typing.Callable] = []
+        self._lock = threading.Lock()
+
+    @property
+    def rectangles(self):
+        return self._rectangles
+
+    @rectangles.setter
+    def rectangles(self, rectangles):
+        with self._lock:
+            self._rectangles = rectangles
+
+        print("GlobalSetup announce changes!")
+        self.announce()
+
+    def add_rectangle(self, rect):
+        with self._lock:
+            self._rectangles.append(rect)
+        self.announce()
+
+    def rm_rectangle(self, rect):
+        with self._lock:
+            self._rectangles.remove(rect)
+        self.announce()
+
+    def announce(self):
+        for callback in self._observers:
+            callback(self._rectangles)
+
+    def bind_to(self, callback: typing.Callable):
+        print("Binding new callback to GlobalSetup")
+        self._observers.append(callback)
+
+    def remove_bind(self, callback: typing.Callable):
+        self._observers.remove(callback)
+
+    def json(self):
+        output_obj = {
+            "rectangles": self.rectangles,
+            "type": "config"
+        }
+        return json.dumps(output_obj)
+
+kattvhask_setup = GlobalSetup()
+setup_queue = None
 
 # Store 50 events in queue
-
-# QUEUE needs to be started inside the 'new_loop'
 queue = None
-# asyncio.Queue(maxsize=100)
+frames = None
+
+# List of connected clients
+connected = set()
+connected_frames = set()
 
 async def events(websocket):
     async for message in websocket:
         await websocket.send(message)
 
-async def echo(websocket, path):
-    print("async echo ws")
-    async for message in websocket:
-        await websocket.send(message)
+async def get_frames():
+    await frames.get()
 
-async def kattvhask_ws(websocket, path):
-    print(f"New connection.. path -> {path}")
-    # cmd = await websocket.recv()
-
-    # if not cmd.startswith("CONN"):
-    #     await websockets.send("Bad command")
-    #     return
-    print("dir(websocket): {}".format(dir(websockets)))
-    # routes = {
-    #     '/events': events,
-    #     '/echo': echo
-    # }
-    #async for message in websocket:
-    #    await websocket.send(message)
-    print(f"websocket: {websocket}")
+async def consume(message):
+    """Validate input regions created from the web interface"""
     try:
+        obj = json.loads(message)
+        # kattvhask_setup.rectangles = obj
+        setup_queue.put(obj)
+    except json.JSONDecodeError:
+        print(f"Unable to parse JSON: {message}")
+        return False
+    return True
+
+async def read_user_input(websocket):
+    async for message in websocket:
+        await consume(message)
+
+async def broadcast_frames(data):
+    for ws in connected_frames:
+        if ws.open:
+            await ws.send(data)
+
+async def broadcast_events(data):
+    for ws in connected:
+        if ws.open:
+            await ws.send(data)
+
+async def stream_frames(websocket, path):
+    if path.startswith("/frames"):
+        connected_frames.add(websocket)
+        try:
+            while True:
+                frame = await frames.get()
+                if frame is not None:
+                    # if websocket.open:
+                    #     await websocket.send(frame.decode("utf-8"))
+                    await broadcast_frames(frame.decode("utf-8"))
+        finally:
+            connected_frames.remove(websocket)
+
+async def stream_events(websocket, path):
+    connected.add(websocket)
+    try:
+        # start with pushin the current camera setup
+        # await websocket.send(kattvhask_setup.json())
+
         while True:
             event = await queue.get()
             print(f"event: {event}")
-            await websocket.send(str(event))
-    except websockets.exceptions.ConnectionClosed:
-        print("Connection closed.")
+            await broadcast_events(json.dumps(event))
+    finally:
+        # Unregister
+        connected.remove(websocket)
 
-    # if path not in routes:
-    #     return
+async def kattvhask_ws(websocket, path):
+    if websocket in connected:
+        print(f"Already registered client")
 
-    # return await routes[path](websocket)
+    if path.startswith('/frames'):
+        print("Client connected for streaming frames..")
+        stream_frame_task = asyncio.ensure_future(stream_frames(websocket, path))
+        await stream_frame_task
+        return
 
+    print("Client connected for streaming events")
+
+    input_reader_task = asyncio.ensure_future(
+        read_user_input(websocket)
+    )
+    event_streamer = asyncio.ensure_future(
+        stream_events(websocket, path)
+    )
+
+    done, pending = await asyncio.wait(
+        [input_reader_task, event_streamer],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    print("done and pending")
+    print(done)
+    for task in pending:
+        task.cancel()
 
 def get_server():
     print("Starting server")
     return websockets.serve(kattvhask_ws, 'localhost', 6789)
 
-    # async with websockets.serve(echo, 'localhost', 6789):
+    # async with websockets.serve(kattvhask_ws, 'localhost', 6789):
     #     await stop
 
-def start_server(loop):
-    global queue
+def start_server(loop, ws_ready_trigger):
+    global queue, frames, setup_queue
     asyncio.set_event_loop(loop)
     start_server_task = get_server()
-    # asyncio.Queue(maxsize=100)
+
+    # setup asyncio queues
     queue = asyncio.Queue(maxsize=100, loop=loop)
+    frames = asyncio.Queue(maxsize=100, loop=loop)
+    setup_queue = janus.Queue(loop=loop)
+
+    # Send "ready" signal back to calling thread
+    ws_ready_trigger.set()
 
     server = loop.run_until_complete(start_server_task)
     loop.run_forever()

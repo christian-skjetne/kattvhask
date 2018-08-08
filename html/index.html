@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Kattvhask control center</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="googlebot" content="noindex, nofollow">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <link rel="stylesheet" type="text/css" href="/css/result-light.css">
+  <script src="reconnecting-websocket.min.js"></script>
+
+  <style type="text/css">
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+    .circle
+    {
+    width:50px;;
+    height:50px;
+    border-radius:50%;
+    font-size:12px;
+    color:#000;
+    line-height:25px;
+    text-align:center;
+    background:#f00;
+
+    /* background-image: -moz-radial-gradient(45px 45px 45deg, circle cover, yellow 0%)*/
+
+    }
+
+    #events {
+      overflow-x: hidden;
+      overflow-y: visible;
+      height: 200px;
+    }
+  </style>
+
+</head>
+<body>
+  <!-- Learn about this code on MDN: https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Advanced_animations -->
+
+<canvas id="canvas" style="border: 1px solid" width="640" height="480"></canvas>
+<br/>
+
+<div id="ctrlButtons" style="padding: 0.5em; margin: 15px;">
+  <canvas id="plussBtn" style="border: 1px solid" width="60" height="60"></canvas>
+  <canvas id="minusBtn" style="border: 1px solid" width="60" height="60"></canvas>
+  <canvas id="saveBtn" style="border: 1px solid" width="100" height="60"></canvas>
+  <canvas id="addBtn" style="border: 1px solid" width="100" height="60"></canvas>
+  <canvas id="removeBtn" style="border: 1px solid" width="100" height="60"></canvas>
+</div>
+
+<div>
+  <div id="status" class="circle"></div>
+</div>
+
+<br/>
+<div id="frame">
+  <p>Events:</p>
+  <div id="events" style="padding: 1em; min-width: 300px; border: 1px solid;">
+  </div>
+</div>
+
+  <script type="text/javascript">
+    // Polyfill to support 'indexOf', since IE7 and IE8 has sparse support for that..
+    Array.prototype.indexOf || (Array.prototype.indexOf = function(d, e) {
+        var a;
+        if (null == this) throw new TypeError('"this" is null or not defined');
+        var c = Object(this),
+            b = c.length >>> 0;
+        if (0 === b) return -1;
+        a = +e || 0;
+        Infinity === Math.abs(a) && (a = 0);
+        if (a >= b) return -1;
+        for (a = Math.max(0 <= a ? a : b - Math.abs(a), 0); a < b;) {
+            if (a in c && c[a] === d) return a;
+            a++
+        }
+        return -1
+    });
+
+    var canvas = document.getElementById('canvas');
+    var ctx = canvas.getContext('2d');
+
+    // control buttons
+    var plussBtn = document.getElementById('plussBtn');
+    var ctx2 = plussBtn.getContext('2d');
+    var minusBtn = document.getElementById('minusBtn');
+    var ctx3 = minusBtn.getContext('2d');
+    var saveBtn = document.getElementById('saveBtn');
+    var ctx4 = saveBtn.getContext('2d');
+    var addBtn = document.getElementById('addBtn');
+    var ctx5 = addBtn.getContext('2d');
+    var removeBtn = document.getElementById('removeBtn');
+    var ctx6 = removeBtn.getContext('2d');
+    var raf;
+    var running = false;
+    var lastid = 0;
+    var rectangles = [];
+    var dragging = false;
+    function guid() {
+      function s4() {
+        return Math.floor((1 + Math.random()) * 0x10000)
+          .toString(16)
+          .substring(1);
+      }
+      return s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4();
+    }
+
+    // Control buttons
+    var pluss = {
+      x:30,
+      y:30,
+      draw:function() {
+        ctx2.font = '48px monospace';
+        ctx2.textAlign="center";
+        ctx2.textBaseline = "middle";
+        ctx2.fillText("+",this.x,this.y);
+      }
+    }
+
+    var minus = {
+      x:30,
+      y:30,
+      draw:function() {
+        ctx3.font = '48px monospace';
+        ctx3.textAlign="center";
+        ctx3.textBaseline = "middle";
+        ctx3.fillText("-",this.x,this.y);
+      }
+    }
+
+    var save = {
+      x:50,
+      y:30,
+      draw:function() {
+        ctx4.font = '32px monospace';
+        ctx4.textAlign="center";
+        ctx4.textBaseline = "middle";
+        ctx4.fillText("Save",this.x,this.y);
+      }
+    }
+
+    var add = {
+      x:50,
+      y:30,
+      draw:function() {
+        ctx5.font = '32px monospace';
+        ctx5.textAlign="center";
+        ctx5.textBaseline = "middle";
+        ctx5.fillText("Add",this.x,this.y);
+      }
+    }
+
+    var remove = {
+      x:50,
+      y:30,
+      draw:function() {
+        ctx6.font = '32px monospace';
+        ctx6.textAlign="center";
+        ctx6.textBaseline = "middle";
+        ctx6.fillText("Rem",this.x,this.y);
+      }
+    }
+
+    // main canvas background image
+    // TODO: Replace with a continous flow of frames from WebSocket
+    /*
+    var image = new Image();
+    image.src = "https://www.wabe.org/wp-content/uploads/2017/04/AP_17090575280187-e1491229126347-600x300.jpg"
+    image.addEventListener('load', function() {
+      kattvhask.clear();
+      kattvhask.drawRectangles();
+    }, false);
+    */
+
+    // Main kattvhask object. Encapsulates all interactions and objects on the canvas
+    var kattvhask = {
+      rectangles: [],
+      selectedRect: null,
+      dragging: false,
+      lastid: 0,
+      canvas: null,
+      background: new Image(),
+
+      addRectangle: function() {
+        const rect = {
+          id: lastid++,
+          uuid: guid(),
+          /*
+          x: 100,
+          y: 100,
+          size: 25,
+          width: 25,
+          height: 25,*/
+          x0: 100,
+          y0: 100,
+          x1: 200,
+          y1: 200,
+          selected: false,
+          color: 'blue',
+          selColor: 'red',
+          draw: function() {
+            ctx.lineWidth = 5;
+            if(this.selected)
+              ctx.strokeStyle = this.selColor;
+            else
+              ctx.strokeStyle = this.color;
+            ctx.strokeRect(this.x0, this.y0, this.x1 - this.x0, this.y1 - this.y0);
+          },
+          info: function() {
+            return `<Rectangle id=${this.id}, x0=${this.x0}, y0=${this.y0}, x1=${this.x1}, y1=${this.y1}, selected=${this.selected}, color=${this.color}>`;
+          },
+          update: function(x, y) {
+            // Update rectangle two (x,y) points.
+            // User must then trigger a new re-draw
+            this.x0 = this.x0 + x;
+            this.y0 = this.y0 + y;
+            this.x1 = this.x1 + x;
+            this.y1 = this.y1 + y;
+          }
+        }
+        this.rectangles.push(rect);
+        return rect;
+      },
+
+      configFromServer: function(data) {
+        console.log("Server config data: ", data);
+        for (var i=0; i<data.rectangles.length; i++) {
+          let r = data.rectangles[i];
+          let newRect = this.addRectangle();
+          newRect.x0 = r.bbox[0];
+          newRect.y0 = r.bbox[1];
+          newRect.x1 = r.bbox[2];
+          newRect.y1 = r.bbox[3];
+          newRect.uuid = r.id;
+
+          console.log("  Add rect: "+newRect.info());
+        }
+
+        console.log("  Added " + data.rectangles.length + " rectangles from config");
+
+        kattvhask.clear();
+        kattvhask.drawRectangles();
+      },
+
+      onClick: function(e) {
+        let coords = mouse(this.canvas, e);
+        let nr = this.rectangles.length;
+        for(var b=this.rectangles.length-1;b>=0;b--) {
+          let rectangle = this.rectangles[b];
+
+          if(this.onRectangle(coords.x, coords.y, rectangle)) {
+            this.unselectRectangles();
+            rectangle.selected = true;
+            this.drawRectangles();
+            break;
+          }
+        }
+        this.drawRectangles();
+      },
+
+      updateBackground: function(data) {
+        this.background.onload = function() {
+          ctx.drawImage(this.background, 0, 0);
+          kattvhask.drawRectangles();
+        }.bind(this);
+
+        this.background.src = "data:image/png;base64," + data;
+      },
+
+      draw: function() {
+        ctx.drawImage(this.background, 0, 0);
+      },
+
+      drawRectangles: function() {
+        // TODO: Refactor with
+        //  for(const r of this.rectangles) { r.draw() }
+        //
+        for(var b=0; b < this.rectangles.length; b++) {
+          this.rectangles[b].draw();
+        }
+      },
+
+      clear: function() {
+        //ctx.drawImage(image, 0, 9);
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.draw();
+      },
+
+      init: function(c) {
+        this.canvas = c;
+      },
+
+      unselectRectangles: function() {
+        // TODO: Refactor with
+        //  for(const r of this.rectangles) { r.draw() }
+        //
+        for(var b=0; b<this.rectangles.length; b++) {
+          this.rectangles[b].selected = false;
+        }
+      },
+
+      getSelectedRect: function() {
+        // TODO: Refactor with
+        //  for(const r of this.rectangles) { r.draw() }
+        //
+        for(var b=this.rectangles.length-1;b>=0;b--) {
+          if(this.rectangles[b].selected)
+            return this.rectangles[b];
+        }
+        return null;
+      },
+
+      isOnRectangle: function(x, y) {
+        if(this.getRectangle(x,y,false) !== null) {
+          return true;
+        }
+        return false;
+      },
+
+      onRectangle: function(x, y, rect, selected) {
+        if(this.getRectangle(x, y, selected) == rect) {
+          return true;
+        }
+        return false;
+      },
+
+      getRectangle: function(x, y, selected) {
+        for (var b=this.rectangles.length-1;b>=0;b--) {
+          let rect = this.rectangles[b];
+
+          // let off = rect.size/2;
+          // let off = (rect.x1 - rect.x0) / 2;
+
+          let left = rect.x0, right = rect.x1;
+          let top = rect.y0, bottom = rect.y1;
+
+          if (left <= x
+            && right >= x
+            && bottom >= y
+            && top <= y) {
+            if (!selected) {
+              console.log("rect: left="+left+", right="+right+", top="+top+", bottom="+bottom);
+              return rect;
+            } else if (rect.selected) {
+              console.log("rect: left="+left+", right="+right+", top="+top+", bottom="+bottom);
+              return rect;
+            }
+          }
+        }
+        return null;
+      },
+
+      removeRectangle: function(obj) {
+        let idx = this.rectangles.indexOf(obj);
+        if (idx > -1) {
+          this.rectangles.splice(idx, 1);
+        }
+      }
+    };
+
+    // ADD
+    addBtn.addEventListener('click', function(e) {
+      const rect = kattvhask.addRectangle();
+      kattvhask.drawRectangles();
+    });
+
+    // REMOVE
+    removeBtn.addEventListener('click', function(e) {
+      let rect = kattvhask.getSelectedRect();
+      if (rect !== null) {
+        kattvhask.removeRectangle(rect);
+        kattvhask.draw();
+        kattvhask.drawRectangles();
+      }
+    });
+
+    // SAVE
+    saveBtn.addEventListener('click', function(e) {
+      console.log("Saved: "+JSON.stringify(kattvhask.rectangles));
+
+      // TODO: Send information to the kattvhask server over
+      // the websocket
+      service.saveConfig(kattvhask.rectangles);
+    });
+
+    // PLUSS
+    plussBtn.addEventListener('click', function(e) {
+      let rect = kattvhask.getSelectedRect();
+      if(rect !== null)
+      {
+        if(rect.size < 200)
+          rect.size += 10;
+        kattvhask.clear();
+        kattvhask.drawRectangles();
+      }
+    });
+
+    // MINUS
+    minusBtn.addEventListener('click', function(e) {
+      let rect = kattvhask.getSelectedRect();
+      if(rect !== null)
+      {
+        if(rect.size > 20)
+          rect.size -= 10;
+        kattvhask.clear();
+        kattvhask.drawRectangles();
+      }
+    });
+
+    // BOX
+    canvas.addEventListener('click', function(e) {
+      kattvhask.onClick(e);
+    });
+
+    canvas.addEventListener('mousemove', function(e) {
+      if(kattvhask.dragging) {
+        let rect = kattvhask.getSelectedRect();
+        if(rect !== null) {
+          let newCoord = mouse(canvas, e);
+          let diffX = (newCoord.x - this.offsetLeft) - rect.startX;
+          let diffY = (newCoord.y - this.offsetTop) - rect.startY;
+
+          rect.update(diffX, diffY);
+
+          rect.startX = newCoord.x - this.offsetLeft;
+          rect.startY = newCoord.y - this.offsetTop;
+        }
+        kattvhask.clear();
+        kattvhask.drawRectangles();
+      }
+
+    });
+
+    canvas.addEventListener('mousedown', function(e) {
+      let coords = mouse(canvas, e);
+      let rect = kattvhask.getRectangle(coords.x, coords.y, true);
+      if (rect !== null) {
+        kattvhask.dragging = true;
+        rect.startX = coords.x - this.offsetLeft;
+        rect.startY = coords.y - this.offsetTop;
+      }
+    });
+
+    canvas.addEventListener('mouseup', function(e) {
+      kattvhask.dragging = false;
+    });
+
+    pluss.draw();
+    minus.draw();
+    save.draw();
+    add.draw();
+    remove.draw();
+
+    kattvhask.init(canvas);
+
+    function mouse(canvas, evt) {
+        var rect = canvas.getBoundingClientRect();
+        return {
+            x: (evt.clientX - rect.left) / (rect.right - rect.left) * canvas.width,
+            y: (evt.clientY - rect.top) / (rect.bottom - rect.top) * canvas.height
+        };
+    }
+
+    // Set up touch events for mobile, etc
+    canvas.addEventListener("touchstart", function (e) {
+      mousePos = mouse(canvas, e);
+      var touch = e.touches[0];
+      var mouseEvent = new MouseEvent("mousedown", {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      });
+      var mouseEvent2 = new MouseEvent("click", {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      });
+      canvas.dispatchEvent(mouseEvent2);
+      canvas.dispatchEvent(mouseEvent);
+    }, {passive:false});
+
+    canvas.addEventListener("touchend", function (e) {
+      var touch = e.touches[0];
+      var mouseEvent = new MouseEvent("mouseup", {});
+      canvas.dispatchEvent(mouseEvent);
+    }, {passive:false});
+
+    canvas.addEventListener("touchmove", function (e) {
+
+      var touch = e.touches[0];
+      var mouseEvent = new MouseEvent("mousemove", {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      });
+      canvas.dispatchEvent(mouseEvent);
+      let coords = mouse(canvas, mouseEvent);
+      if (e.target == canvas && kattvhask.isOnRectangle(coords.x, coords.y)) {
+        e.preventDefault();
+      }
+
+    }, {passive:false});
+
+    // Get the position of a touch relative to the canvas
+    function getTouchPos(canvasDom, touchEvent) {
+      var rect = canvasDom.getBoundingClientRect();
+      return {
+        x: touchEvent.touches[0].clientX - rect.left,
+        y: touchEvent.touches[0].clientY - rect.top
+      };
+    }
+</script>
+
+  <script>
+    // tell the embed parent frame the height of the content
+    if (window.parent && window.parent.parent) {
+      window.parent.parent.postMessage(["resultsFrame", {
+        height: document.body.getBoundingClientRect().height,
+        slug: ""
+      }], "*");
+    }
+  </script>
+
+  <script type="text/javascript">
+  function KattvhaskService(canvas) {
+    this.ws_frames = new ReconnectingWebSocket("ws://localhost:6789/frames");
+    this.ws_frames.onmessage = this.new_frame.bind(this);
+    this.ws_frames.onopen = this.frames_open.bind(this);
+
+    this.ws = new ReconnectingWebSocket("ws://localhost:6789");
+    this.ws.onopen = this.onopen.bind(this);
+    this.ws.onmessage = this.onmessage.bind(this);
+    this.ws.onclose = this.onclose.bind(this);
+    this.ws.onerror = this.onerror.bind(this);
+
+    this.frame = null;
+    this.canvas = canvas;
+
+    this.status = false;
+  }
+
+  KattvhaskService.prototype.setOk = function() {
+    // green
+    let statusCircle = document.getElementById("status");
+    statusCircle.style.backgroundColor = "#0f0";
+    this.status = true;
+  }
+
+  KattvhaskService.prototype.setNotOk = function() {
+    // red
+    let statusCircle = document.getElementById("status");
+    statusCircle.style.backgroundColor = "#f00";
+    this.status = false;
+  }
+
+  KattvhaskService.prototype.frames_open = function() {
+    console.log("Websocket to frames service is now open");
+  }
+
+  KattvhaskService.prototype.new_frame = function(e) {
+    let data = e.data;
+    kattvhask.updateBackground(data);
+  }
+
+  KattvhaskService.prototype.onopen = function(e) {
+    console.log("websocket connection is now open");
+    this.setOk();
+  }
+
+  KattvhaskService.prototype.onmessage = function(e) {
+    try {
+      let data = JSON.parse(e.data);
+      if (data.type == 'config') {
+        console.log("Incoming setup object", data);
+        kattvhask.configFromServer(data);
+
+      } else {
+        let newEvent = document.createElement("p");
+        newEvent.style.cssText = "color: grey;";
+        newEvent.innerText = e.data;
+
+        let parentNode = document.getElementById("events");
+        parentNode.appendChild(newEvent);
+        events.scrollTop = events.scrollHeight;
+      }
+    } catch(err) {
+      console.log(err);
+      console.log("e.data -> ", e.data);
+    }
+  }
+
+  KattvhaskService.prototype.onclose = function(e) {
+    console.log("Websocket closed");
+    this.setNotOk();
+  }
+
+  KattvhaskService.prototype.onerror = function(e) {
+    console.log("WebSocket error.");
+    this.setNotOk();
+  }
+
+  KattvhaskService.prototype.saveConfig = function(rectangles) {
+    if (!this.status) {
+      console.log("No good websocket connection at the moment");
+      return;
+    }
+    let data = JSON.stringify(rectangles);
+    this.ws.send(data);
+  }
+  //var frameCanvas = document.getElementById("frameCanvas");
+  //var frameCtx = frameCanvas.getContext('2d');
+  var service = new KattvhaskService(ctx);
+  </script>
+</body>
+</html>
