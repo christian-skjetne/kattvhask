@@ -38,11 +38,12 @@ LOG.setLevel(logging.DEBUG)
 
 class Kattvhask:
 
-    def __init__(self, loop, config : Dict=None, headless=False, **kw):
+    def __init__(self, loop, config : Dict=None, headless=False, resolution=(640, 480), **kw):
         self.root = None
         self.capture = None
         self.rect = None
         self.image = None
+        self.resolution = resolution
         self.rectangles = []
         self.object_mapping = {}
         self.active_rect = None
@@ -418,14 +419,15 @@ class Kattvhask:
         self.capture.stop()
 
     def init_video_stream(self):
+        LOG.info(f"Video stream resolution: {self.resolution}")
         import imutils.video
         if utils.is_raspberry_pi():
             LOG.info("Running Raspberry Pi")
-            self.capture = imutils.video.VideoStream(usePiCamera=True)
+            self.capture = imutils.video.VideoStream(usePiCamera=True, resolution=self.resolution)
         else:
             LOG.info("Running regular x86")
             # self.capture = cv2.VideoCapture(0)
-            self.capture = imutils.video.VideoStream()
+            self.capture = imutils.video.VideoStream(resolution=self.resolution)
 
         # start video capture thread
         self.capture.start()
@@ -634,14 +636,22 @@ class Kattvhask:
              type=click.Choice(
                  ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
              ),
+             show_default=True,
              help="The level of logging output to include")
 @click.option("--config",
              default=None,
              type=click.Path(exists=False, file_okay=True, dir_okay=False, resolve_path=True),
              help='Configuration file')
+@click.option("--resolution",
+             default="(640, 480)",
+             show_default=True,
+             type=click.STRING,
+             help="Camera resolution"
+             )
 @click.option('--headless',
              default=False,
              is_flag=True,
+             show_default=True,
              type=bool,
              help="If true then run in headless mode (without any GUI)")
 @click.option('--mqtt-host',
@@ -653,7 +663,7 @@ class Kattvhask:
 @click.option('--mqtt-pw',
              default=None,
              help="MQTT password")
-def main(loglevel, config, headless, mqtt_host, mqtt_username, mqtt_pw):
+def main(loglevel, config, headless, mqtt_host, mqtt_username, mqtt_pw, resolution):
     logconfig.init(loglevel=getattr(logging, loglevel))
     if not imutils.is_cv3():
         LOG.info("Kattvhask needs OpenCV 3.X")
@@ -696,7 +706,9 @@ def main(loglevel, config, headless, mqtt_host, mqtt_username, mqtt_pw):
         if mqtt_host:
             mqtt_handler = handlers.Mqtt("kattvhask", mqtt_host, mqtt_username, mqtt_pw)
 
-        app = Kattvhask(new_loop, config=cfg, headless=headless, mqtt=mqtt_handler, setup_queue=web_server.setup_queue)
+        app = Kattvhask(new_loop, config=cfg, headless=headless,
+                        mqtt=mqtt_handler, setup_queue=web_server.setup_queue,
+                        resolution=resolution)
         app.run()
 
     except KeyboardInterrupt:
