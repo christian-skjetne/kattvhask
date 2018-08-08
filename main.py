@@ -244,7 +244,7 @@ class Kattvhask:
 
                 ws_payload.append({
                     "bbox": (x0, y0, x1, y1),
-                    "id": rect_id
+                    "id": str(rect_id)
                 })
 
             # Write dictionary to cfg_file (json serialized)
