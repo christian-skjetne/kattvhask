@@ -58,6 +58,7 @@ class GlobalSetup:
 
 kattvhask_setup = GlobalSetup()
 setup_queue = None
+latest_setup = None
 
 # Store 50 events in queue
 queue = None
@@ -127,19 +128,23 @@ async def stream_events(websocket, path):
         connected.remove(websocket)
 
 async def stream_setup(websocket, path):
-    # connected.add(websocket)
+    global latest_setup
     try:
         # start with pushin the current camera setup
         # await websocket.send(kattvhask_setup.json())
         async_queue = setup_queue.async_q
 
+        if async_queue.empty() and latest_setup is not None:
+            print(f" Pushing latest setup to new client..")
+            await websocket.send(json.dumps(latest_setup))
+
         while True:
             event = await async_queue.get()
+            latest_setup = event
+            async_queue.task_done()
             print(f"setup event: {event}")
             await broadcast_events(json.dumps(event))
     finally:
-        # Unregister
-        #connected.remove(websocket)
         pass
 
 async def kattvhask_ws(websocket, path):
@@ -177,8 +182,6 @@ def get_server():
     print("Starting server")
     return websockets.serve(kattvhask_ws, 'localhost', 6789)
 
-    # async with websockets.serve(kattvhask_ws, 'localhost', 6789):
-    #     await stop
 
 def start_server(loop, ws_ready_trigger):
     global queue, frames, setup_queue
@@ -198,6 +201,7 @@ def start_server(loop, ws_ready_trigger):
     print("Loop exited. Closing server..")
     server.close()
     loop.run_until_complete(server.wait_closed())
+
 
 if __name__ == "__main__":
     import asyncio
