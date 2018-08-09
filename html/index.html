@@ -230,6 +230,16 @@
 
       configFromServer: function(data) {
         console.log("Server config data: ", data);
+        /*
+        1. first remove all rectangles
+        2. add the 'updated' ones
+        3. redraw canvas
+        */
+
+        // clear
+        this.rectangles = [];
+
+        // add new
         for (var i=0; i<data.rectangles.length; i++) {
           let r = data.rectangles[i];
           let newRect = this.addRectangle();
@@ -244,8 +254,8 @@
 
         console.log("  Added " + data.rectangles.length + " rectangles from config");
 
-        kattvhask.clear();
-        kattvhask.drawRectangles();
+        this.clear();
+        this.drawRectangles();
       },
 
       onClick: function(e) {
