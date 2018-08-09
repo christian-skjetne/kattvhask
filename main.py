@@ -92,7 +92,10 @@ class Kattvhask:
         if not self.config:
             return
 
-        ws_payload = []
+        ws_payload = {
+            "type": "config",
+            "rectangles": []
+        }
         for rect in self.config.get("rectangles", []):
             rect_id = rect.get("id")
             x0 = rect.get("x0")
@@ -103,10 +106,9 @@ class Kattvhask:
                 "bbox": (x0, y0, x1, y1),
                 "id": rect_id
             }
-            ws_payload.append(new_rect)
+            ws_payload["rectangles"].append(new_rect)
 
             if not self.headless:
-                # Create tk rectangles
                 canvas_rect = self.canvas.create_rectangle(x0, y0, x1, y1, outline='green', width=self.rect_border_width, tags="rectangle")
                 self.canvas.itemconfig(canvas_rect, outline='red')
                 self.rectangles.append(canvas_rect)
@@ -116,13 +118,6 @@ class Kattvhask:
                 self.rectangles.append(new_rect)
 
         print("kattvhask ws_payload: {}".format(ws_payload))
-        # UGLY trick: we wan't to avoid an 'update' event on the
-        #           web_server.kattvhask_setup object. Therefore
-        #           removing our listener before updating the value.
-        #           Then add our 'self.on_setup_update' callback again.
-        # web_server.kattvhask_setup.remove_bind(self.on_setup_update)
-        # web_server.kattvhask_setup.rectangles = ws_payload
-        # web_server.kattvhask_setup.bind_to(self.on_setup_update)
         self.setup_queue.put(ws_payload)
 
     def add_rectangle(self, uuid, bbox):
@@ -227,7 +222,10 @@ class Kattvhask:
     def save(self):
         """Save all rectangles to a config file (json)."""
 
-        ws_payload = []
+        ws_payload = {
+            "type": "config",
+            "rectangles": []
+        }
         with open('config.json', 'w') as cfg_file:
             data = {'rectangles': []}
             for rect in self.rectangles:
@@ -242,7 +240,7 @@ class Kattvhask:
                     "y1": y1
                 })
 
-                ws_payload.append({
+                ws_payload["rectangles"].append({
                     "bbox": (x0, y0, x1, y1),
                     "id": str(rect_id)
                 })
