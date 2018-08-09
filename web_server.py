@@ -80,7 +80,8 @@ async def consume(message):
     try:
         obj = json.loads(message)
         # kattvhask_setup.rectangles = obj
-        setup_queue.put(obj)
+        async_queue = setup_queue.async_q
+        async_queue.put(obj)
     except json.JSONDecodeError:
         print(f"Unable to parse JSON: {message}")
         return False
