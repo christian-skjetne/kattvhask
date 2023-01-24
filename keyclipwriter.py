@@ -4,10 +4,12 @@ from threading import Thread
 from queue import Queue
 import time
 import cv2
+import os
+import pendulum
 
 
 class KeyClipWriter:
-    def __init__(self, bufSize=64, timeout=0.01):
+    def __init__(self, base_outputdir, bufSize=64, timeout=0.01):
         # store the maximum buffer size of frames to be kept
         # in memory along with the sleep timeout during threading
         self.bufSize = bufSize
@@ -18,12 +20,17 @@ class KeyClipWriter:
         # and boolean indicating whether recording has started or not
         self.frames = deque(maxlen=bufSize)
         self.Q = None
-        self.writer1 = None
-        self.writer2 = None
+        self.writer = None
         self.thread = None
         self.recording = False
-        self.savedone = True
-        self.current = 1
+        self._time_start_record = None
+        self.base_outputdir = base_outputdir
+        if not os.path.isdir(self.base_outputdir):
+            os.mkdir(self.base_outputdir)
+        self._today = pendulum.today().date()
+        self.path = os.path.join(self.base_outputdir, str(self._today))
+
+        self.mkpath()
 
     def update(self, frame):
         # update the frames buffer
@@ -33,25 +40,32 @@ class KeyClipWriter:
         if self.recording:
             self.Q.put(frame)
 
-    def start(self, outputPath, fourcc, fps):
+    def mkpath(self):
+        if not os.path.isdir(self.path):
+            os.mkdir(self.path)
+            return True
+        return False
+
+    def start(self, fourcc, fps):
         # indicate that we are recording, start the video writer,
         # and initialize the queue of frames that need to be written
         # to the video file
         self.recording = True
-        self.savedone = False
-        if self.writer1 == None or not self.writer1.isOpened():
-            print("starting w1")
-            self.current = 1
-            self.writer1 = cv2.VideoWriter(outputPath, fourcc, fps,
-                (self.frames[0].shape[1], self.frames[0].shape[0]), True)
-        elif self.writer2 == None or not self.writer2.isOpened():
-            print("starting w2")
-            self.current = 2
-            self.writer2 = cv2.VideoWriter(outputPath, fourcc, fps,
-                (self.frames[0].shape[1], self.frames[0].shape[0]), True)
-        else:
-            print("start ALL WRITERS ARE OPEN... ERROR!!!!")
 
+        # Group messages based on the current date
+        self._time_start_record = pendulum.now()
+        now_date = self.start_time.date()
+        if self._today < now_date:
+            # New date - need to create a new folder
+            self._today = now_date
+            self.path = os.path.join(self.base_outputdir, str(self._today))
+            self.mkpath()
+
+        filename = ".".join([self.start_time.strftime("%H:%m:%S"), "mkv"])
+        output_file = os.path.join(self.path, filename)
+
+        self.writer = cv2.VideoWriter(output_file, fourcc, fps,
+            (self.frames[0].shape[1], self.frames[0].shape[0]), True)
         self.Q = Queue()
 
         # loop over the frames in the deque structure and add them
@@ -66,7 +80,7 @@ class KeyClipWriter:
 
     def write(self):
         # keep looping
-        while self.recording: #True:
+        while self.recording:
             # if we are done recording, exit the thread
             #if not self.recording:
             #   return
@@ -76,51 +90,37 @@ class KeyClipWriter:
                 # grab the next frame in the queue and write it
                 # to the video file
                 frame = self.Q.get()
-                ##self.writer.write(frame)
-                if self.current == 1:
-                    #print("writing w1")
-                    self.writer1.write(frame)
-                elif self.current == 2:
-                    #print("writing w2")
-                    self.writer2.write(frame)
+                self.writer.write(frame)
 
             # otherwise, the queue is empty, so sleep for a bit
             # so we don't waste CPU cycles
             else:
                 time.sleep(self.timeout)
 
-        print("gotStop")
         self.flush()
-        print("flushed")
-        #self.writer.release()
-        self.savedone = True
-        if self.writer1.isOpened():
-            self.writer1.release()
-        elif self.writer2.isOpened():
-            self.writer2.release()
-        else:
-            print("release ALL WRITERS ARE CLOSED... ERROR!!!!")
-
-        print("stopped")
-        return
+        self.writer.release()
 
     def flush(self):
         # empty the queue by flushing all remaining frames to file
         while not self.Q.empty():
             frame = self.Q.get()
-            #self.writer.write(frame)
-            if self.writer1.isOpened():
-                self.writer1.write(frame)
-            elif self.writer2.isOpened():
-                self.writer2.write(frame)
-            else:
-                print("flush ALL WRITERS ARE CLOSED... ERROR!!!!")
+            self.writer.write(frame)
+
+    @property
+    def start_time(self):
+        return self._time_start_record
+
+    @property
+    def record_time(self):
+        return self._time_stop_record - self._time_start_record
 
     def finish(self):
         # indicate that we are done recording, join the thread,
         # flush all remaining frames in the queue to file, and
         # release the writer pointer
+        self._time_stop_record = pendulum.now()
+        print("Done recording. {} seconds".format(self.record_time))
         self.recording = False
-        #self.thread.join()
-        #self.flush()
-        #self.writer.release()
+        self.thread.join()
+        self.flush()
+        self.writer.release()
